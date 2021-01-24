@@ -16,6 +16,8 @@ mod rule;
 mod queues;
 pub(super) mod updates;
 mod counters;
+mod scale;
+pub use scale::Scale as Prescale;
 
 /// Container data structure to keep track of presolve status.
 ///

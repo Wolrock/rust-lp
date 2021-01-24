@@ -309,6 +309,7 @@ where
         self.transform_variables();
         self.make_b_non_negative();
         self.make_minimization_problem();
+        self.scale();
 
         Ok(())
     }
