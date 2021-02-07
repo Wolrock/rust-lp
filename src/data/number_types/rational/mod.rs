@@ -6,11 +6,14 @@ pub use small::Rational128 as Rational128;
 pub use small::Rational32 as Rational32;
 pub use small::Rational64 as Rational64;
 
+use crate::data::number_types::nonzero::Nonzero;
+
 mod small;
 mod big;
 mod macros;
+mod factorization;
 
-pub trait Rational {
+pub trait Rational: Nonzero {
     type Numerator;
     type Denominator;
 
