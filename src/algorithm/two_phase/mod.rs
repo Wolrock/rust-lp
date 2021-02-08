@@ -9,14 +9,14 @@ use crate::algorithm::two_phase::matrix_provider::column::identity::IdentityColu
 use crate::algorithm::two_phase::matrix_provider::filter::generic_wrapper::{IntoFilteredColumn, RemoveRows};
 use crate::algorithm::two_phase::matrix_provider::MatrixProvider;
 use crate::algorithm::two_phase::phase_one::{FeasibilityComputeTrait, FullInitialBasis, Rank, RankedFeasibilityResult};
-use crate::algorithm::two_phase::strategy::pivot_rule::SteepestDescent;
+use crate::algorithm::two_phase::strategy::pivot_rule::{SteepestDescent, FirstProfitable};
 use crate::algorithm::two_phase::tableau::inverse_maintenance::{InverseMaintener, ops as im_ops};
 use crate::algorithm::two_phase::tableau::kind::artificial::Cost as ArtificialCost;
 use crate::algorithm::two_phase::tableau::kind::non_artificial::NonArtificial;
 use crate::algorithm::two_phase::tableau::Tableau;
 
 pub(crate) mod phase_one;
-pub(crate) mod phase_two;
+pub mod phase_two;
 
 pub mod tableau;
 pub mod matrix_provider;
@@ -40,7 +40,7 @@ where
         // Default choice
         // TODO(ENHANCEMENT): Consider implementing a heuristic to decide these strategies
         //  dynamically
-        type NonArtificialPR = SteepestDescent;
+        type NonArtificialPR = FirstProfitable;
 
         match self.compute_bfs_giving_im::<IM>() {
             RankedFeasibilityResult::Feasible {
@@ -83,6 +83,7 @@ where
     // TODO(ARCHITECTURE): The <MP as MatrixProvider>::Column: IdentityColumn bound is needed
     //  because of limitations of the specialization feature; overlap is not (yet) allowed.
     MP: MatrixProvider<Column: IdentityColumn + IntoFilteredColumn>,
+    MP::Rhs: 'static,
 {
     fn solve_relaxation<IM>(&self) -> OptimizationResult<IM::F>
     where

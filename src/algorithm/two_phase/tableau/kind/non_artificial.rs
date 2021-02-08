@@ -92,7 +92,7 @@ where
     /// # Return value
     ///
     /// `Tableau` with for the provided problem with the provided basis.
-    pub(crate) fn new_with_inverse_maintainer(
+    pub fn new_with_inverse_maintainer(
         provider: &'provider MP,
         inverse_maintainer: IM,
         basis_columns: HashSet<usize>,
@@ -122,7 +122,11 @@ where
         provider: &'provider MP,
         // TODO(OPTIMIZATION): Order doesn't matter, document and make this a Vec
         basis: &HashSet<usize>,
-    ) -> Self {
+    ) -> Self
+    where
+        MP::Rhs: 'static,
+        IM::F: im_ops::Column<MP::Rhs>,
+    {
         let arbitrary_order = basis.iter().copied().collect::<Vec<_>>();
 
         Tableau {

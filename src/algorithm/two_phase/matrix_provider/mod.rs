@@ -11,6 +11,7 @@ use crate::data::linear_program::elements::BoundDirection;
 pub mod column;
 pub mod matrix_data;
 pub mod filter;
+pub mod ops;
 pub mod variable;
 
 /// Abstract interface for a matrix and constraint vector.
@@ -49,7 +50,7 @@ pub trait MatrixProvider {
     type Cost<'a>;
 
     /// Right hand side type.
-    type Rhs: Element;
+    type Rhs: ops::Rhs;
 
     /// Column of the problem.
     ///

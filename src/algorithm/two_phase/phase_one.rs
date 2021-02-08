@@ -24,7 +24,7 @@ pub trait FeasibilityComputeTrait: MatrixProvider<Column: IdentityColumn> {
     /// # Returns
     ///
     /// A value representing the basic feasible solution, or an indicator that there is none.
-    fn compute_bfs_giving_im<IM>(&self) -> RankedFeasibilityResult<IM>
+    fn compute_bfs_giving_im<'a, IM>(&'a self) -> RankedFeasibilityResult<IM>
     where
         IM: InverseMaintener<F:
             im_ops::InternalHR +
@@ -40,7 +40,7 @@ impl<MP> FeasibilityComputeTrait for MP
 where
     MP: MatrixProvider<Column: IdentityColumn>
 {
-    default fn compute_bfs_giving_im<IM>(&self) -> RankedFeasibilityResult<IM>
+    default fn compute_bfs_giving_im<'a, IM>(&'a self) -> RankedFeasibilityResult<IM>
     where
         IM: InverseMaintener<F:
             im_ops::InternalHR +
@@ -82,7 +82,7 @@ impl<MP: PartialInitialBasis> FeasibilityComputeTrait for MP
 where
     MP: MatrixProvider<Column: IdentityColumn>,
 {
-    default fn compute_bfs_giving_im<IM>(&self) -> RankedFeasibilityResult<IM>
+    default fn compute_bfs_giving_im<'a, IM>(&'a self) -> RankedFeasibilityResult<IM>
     where
         IM: InverseMaintener<F:
             im_ops::InternalHR +
@@ -132,6 +132,7 @@ where
 {
     let mut rule = PR::new();
     loop {
+        println!("{}", tableau);
         debug_assert!(is_in_basic_feasible_solution_state(&tableau));
 
         match rule.select_primal_pivot_column(&tableau) {
