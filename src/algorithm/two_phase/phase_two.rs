@@ -18,7 +18,7 @@ use crate::algorithm::two_phase::tableau::kind::non_artificial::NonArtificial;
 ///
 /// An `OptimizationResult` indicating whether or not the problem has a finite optimum. It cannot be
 /// infeasible, as a feasible solution is needed to start using this method.
-pub(crate) fn primal<IM, MP, PR>(
+pub fn primal<IM, MP, PR>(
     tableau: &mut Tableau<IM, NonArtificial<MP>>,
 ) -> OptimizationResult<IM::F>
 where
