@@ -78,8 +78,8 @@ pub(crate) fn merge_sparse_indices<I: Ord, T>(
     let mut left = left.peekable();
     let mut right = right.peekable();
 
-    while let (Some(&(left_index, _)), Some(&(right_index, _))) = (left.peek(), right.peek()) {
-        let (index, value) = match left_index.cmp(&right_index) {
+    while let (Some((left_index, _)), Some((right_index, _))) = (left.peek(), right.peek()) {
+        let (index, value) = match left_index.cmp(right_index) {
             Ordering::Less => left.next().unwrap(),
             Ordering::Equal => {
                 let (left_index, left_value) = left.next().unwrap();

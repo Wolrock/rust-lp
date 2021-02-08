@@ -1,5 +1,3 @@
-use num::FromPrimitive;
-
 use rust_lp::algorithm::two_phase::matrix_provider::matrix_data::MatrixData;
 use rust_lp::algorithm::two_phase::phase_two;
 use rust_lp::algorithm::two_phase::strategy::pivot_rule::FirstProfitable;
@@ -13,7 +11,6 @@ use rust_lp::data::linear_algebra::vector::{DenseVector, Vector};
 use rust_lp::data::linear_program::elements::VariableType;
 use rust_lp::data::linear_program::general_form::Variable;
 use rust_lp::data::number_types::rational::RationalBig;
-use rust_lp::RB;
 
 fn main() {
     let input_matrix = [
@@ -27,7 +24,7 @@ fn main() {
     let m = input_matrix.len();
     let n = input_matrix[0].len();
 
-    let column_extreme = |f: fn(_) -> Option<i32>| (0..n)
+    let column_extreme = |f: fn(_) -> Option<_>| (0..n)
         .map(|j| f((0..m).map(move |i| input_matrix[i][j])).unwrap())
         .collect::<Vec<_>>();
     let column_min = column_extreme(Iterator::min);
@@ -36,28 +33,28 @@ fn main() {
     // Variables
     let x = (0..m).map(|_| Variable {
             variable_type: VariableType::Continuous,
-            cost: RB!(0),
-            lower_bound: Some(RB!(0)),
+            cost: 0,
+            lower_bound: Some(0),
             upper_bound: None,
-            shift: RB!(0),
+            shift: 0,
             flipped: false,
         })
         .collect::<Vec<_>>();
     let m_lower = (0..n).map(|_| Variable {
         variable_type: VariableType::Continuous,
-        cost: RB!(-1),
-        lower_bound: Some(RB!(0)),
+        cost: -1,
+        lower_bound: Some(0),
         upper_bound: None,
-        shift: RB!(0),
+        shift: 0,
         flipped: false,
     })
         .collect::<Vec<_>>();
     let m_upper = (0..n).map(|_| Variable {
         variable_type: VariableType::Continuous,
-        cost: RB!(1),
-        lower_bound: Some(RB!(0)),
+        cost: 1,
+        lower_bound: Some(0),
         upper_bound: None,
-        shift: RB!(0),
+        shift: 0,
         flipped: false,
     })
         .collect::<Vec<_>>();
@@ -71,8 +68,8 @@ fn main() {
     let mut had_a_min = vec![false; n];
     for j in 0..n {
         for i in 0..m {
-            row_major_constraints.push(vec![(i, RB!(1)), (m + j, RB!(1))]);
-            b.push(RB!(input_matrix[i][j]));
+            row_major_constraints.push(vec![(i, 1), (m + j, 1)]);
+            b.push(input_matrix[i][j]);
             basis_columns.push(if input_matrix[i][j] == column_min[j] {
                 if had_a_min[j] {
                     m + 2 * n + nr_upper_bounded_constraints
@@ -90,8 +87,8 @@ fn main() {
     let mut had_a_max = vec![false; n];
     for j in 0..n {
         for i in 0..m {
-            row_major_constraints.push(vec![(i, RB!(1)), (m + n + j, RB!(1))]);
-            b.push(RB!(input_matrix[i][j]));
+            row_major_constraints.push(vec![(i, 1), (m + n + j, 1)]);
+            b.push(input_matrix[i][j]);
             basis_columns.push(if input_matrix[i][j] == column_max[j] {
                 if had_a_max[j] {
                     m + 2 * n + nr_upper_bounded_constraints + nr_lower_bounded_constraints

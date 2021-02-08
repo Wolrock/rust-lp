@@ -11,7 +11,8 @@ use crate::data::number_types::nonzero::Nonzero;
 mod small;
 mod big;
 mod macros;
-mod factorization;
+// TODO
+// mod factorization;
 
 pub trait Rational: Nonzero {
     type Numerator;

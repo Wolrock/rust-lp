@@ -19,6 +19,7 @@
 #![feature(peekable_next_if)]
 #![feature(vecdeque_binary_search)]
 #![feature(map_first_last)]
+#![feature(concat_idents)]
 
 extern crate daggy;
 extern crate num;

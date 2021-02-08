@@ -6,7 +6,7 @@ use crate::data::number_types::nonzero::Nonzero;
 use std::cmp::Ordering;
 
 /// A signed number that can have a nonzero value.
-pub trait Signed: Nonzero + Clone {
+pub trait Signed: Nonzero + Neg<Output=Self> + Clone {
     /// Absolute value of x, |x|.
     fn abs(&self) -> Self {
         let cloned = self.clone();
