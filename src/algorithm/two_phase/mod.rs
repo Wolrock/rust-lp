@@ -9,7 +9,7 @@ use crate::algorithm::two_phase::matrix_provider::column::identity::IdentityColu
 use crate::algorithm::two_phase::matrix_provider::filter::generic_wrapper::{IntoFilteredColumn, RemoveRows};
 use crate::algorithm::two_phase::matrix_provider::MatrixProvider;
 use crate::algorithm::two_phase::phase_one::{FeasibilityComputeTrait, FullInitialBasis, Rank, RankedFeasibilityResult};
-use crate::algorithm::two_phase::strategy::pivot_rule::{SteepestDescent, FirstProfitable};
+use crate::algorithm::two_phase::strategy::pivot_rule::{FirstProfitable, SteepestDescent};
 use crate::algorithm::two_phase::tableau::inverse_maintenance::{InverseMaintener, ops as im_ops};
 use crate::algorithm::two_phase::tableau::kind::artificial::Cost as ArtificialCost;
 use crate::algorithm::two_phase::tableau::kind::non_artificial::NonArtificial;

@@ -4,7 +4,7 @@
 //! practice, we store in a matrix that describes the current basis together with the original
 //! (also sparse) matrix data. This module contains structures that can provide a matrix.
 use crate::algorithm::two_phase::matrix_provider::column::{Column, OrderedColumn};
-use crate::data::linear_algebra::traits::{Element, SparseComparator, SparseElement};
+use crate::data::linear_algebra::traits::{SparseComparator, SparseElement};
 use crate::data::linear_algebra::vector::{DenseVector, SparseVector};
 use crate::data::linear_program::elements::BoundDirection;
 

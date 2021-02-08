@@ -1,25 +1,27 @@
 use num::FromPrimitive;
 
 use rust_lp::algorithm::two_phase::matrix_provider::matrix_data::MatrixData;
+use rust_lp::algorithm::two_phase::phase_two;
+use rust_lp::algorithm::two_phase::strategy::pivot_rule::FirstProfitable;
 use rust_lp::algorithm::two_phase::tableau::inverse_maintenance::carry::basis_inverse_rows::BasisInverseRows;
 use rust_lp::algorithm::two_phase::tableau::inverse_maintenance::carry::Carry;
+use rust_lp::algorithm::two_phase::tableau::inverse_maintenance::InverseMaintener;
+use rust_lp::algorithm::two_phase::tableau::kind::non_artificial::NonArtificial;
+use rust_lp::algorithm::two_phase::tableau::Tableau;
 use rust_lp::data::linear_algebra::matrix::{ColumnMajor, Order};
 use rust_lp::data::linear_algebra::vector::{DenseVector, Vector};
 use rust_lp::data::linear_program::elements::VariableType;
 use rust_lp::data::linear_program::general_form::Variable;
 use rust_lp::data::number_types::rational::RationalBig;
 use rust_lp::RB;
-use rust_lp::algorithm::two_phase::tableau::inverse_maintenance::InverseMaintener;
-use rust_lp::algorithm::two_phase::tableau::kind::non_artificial::NonArtificial;
-use rust_lp::algorithm::two_phase::phase_two;
-use rust_lp::algorithm::two_phase::strategy::pivot_rule::FirstProfitable;
-use rust_lp::algorithm::two_phase::tableau::Tableau;
 
 fn main() {
     let input_matrix = [
         [3, 3, 3],
         [2, 3, 3],
         [1, 2, 3],
+        // [3],
+        // [2],
     ];
 
     let m = input_matrix.len();
@@ -36,7 +38,7 @@ fn main() {
             variable_type: VariableType::Continuous,
             cost: RB!(0),
             lower_bound: Some(RB!(0)),
-            upper_bound: Some(RB!(1)),
+            upper_bound: None,
             shift: RB!(0),
             flipped: false,
         })
@@ -69,39 +71,39 @@ fn main() {
     let mut had_a_min = vec![false; n];
     for j in 0..n {
         for i in 0..m {
-            if input_matrix[i][j] == column_min[j] {
-                row_major_constraints.push(vec![(i, RB!(1)), (m + j, RB!(1))]);
-                b.push(RB!(input_matrix[i][j]));
-                basis_columns.push(if had_a_min[j] {
+            row_major_constraints.push(vec![(i, RB!(1)), (m + j, RB!(1))]);
+            b.push(RB!(input_matrix[i][j]));
+            basis_columns.push(if input_matrix[i][j] == column_min[j] {
+                if had_a_min[j] {
                     m + 2 * n + nr_upper_bounded_constraints
                 } else {
                     had_a_min[j] = true;
                     m + j
-                });
-                nr_upper_bounded_constraints += 1;
-            }
+                }
+            } else {
+                m + 2 * n + nr_upper_bounded_constraints
+            });
+            nr_upper_bounded_constraints += 1;
         }
     }
     let mut nr_lower_bounded_constraints = 0;
     let mut had_a_max = vec![false; n];
     for j in 0..n {
         for i in 0..m {
-            if input_matrix[i][j] == column_max[j] {
-                row_major_constraints.push(vec![(i, RB!(1)), (m + n + j, RB!(1))]);
-                b.push(RB!(input_matrix[i][j]));
-                basis_columns.push(if had_a_max[j] {
+            row_major_constraints.push(vec![(i, RB!(1)), (m + n + j, RB!(1))]);
+            b.push(RB!(input_matrix[i][j]));
+            basis_columns.push(if input_matrix[i][j] == column_max[j] {
+                if had_a_max[j] {
                     m + 2 * n + nr_upper_bounded_constraints + nr_lower_bounded_constraints
                 } else {
                     had_a_max[j] = true;
                     m + n + j
-                });
-                nr_lower_bounded_constraints += 1;
-            }
+                }
+            } else {
+                m + 2 * n + nr_upper_bounded_constraints + nr_lower_bounded_constraints
+            });
+            nr_lower_bounded_constraints += 1;
         }
-    }
-
-    for i in 0..m {
-        basis_columns.push(m + 2 * n + nr_upper_bounded_constraints + nr_lower_bounded_constraints + i);
     }
 
     let mut constraints = vec![vec![]; m + 2 * n];
@@ -128,4 +130,5 @@ fn main() {
         &matrix, inverse_maintainer, basis_columns.into_iter().collect(),
     );
     phase_two::primal::<_, _, FirstProfitable>(&mut tableau);
+    println!("{} {}", nr_upper_bounded_constraints, nr_lower_bounded_constraints);
 }
