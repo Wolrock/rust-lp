@@ -22,7 +22,7 @@ mod decomposition;
 mod permutation;
 mod eta_file;
 
-time_basis_change: SystemTime = SystemTime::now();
+// time_basis_change: SystemTime = SystemTime::now();
 
 /// Decompose a matrix `B` into `PBQ = LU` where
 ///
@@ -34,7 +34,7 @@ time_basis_change: SystemTime = SystemTime::now();
 /// Note that permutations `P` and `Q` have the transpose equal to their inverse as they are
 /// orthogonal matrices.
 ///
-/// `P` and `Q` are "full" permutations, not toscuc*KEEC9frul1stoh be confused with the simpler "rotating" permutations
+/// `P` and `Q` are "full" permutations, not to be confused with the simpler "rotating" permutations
 /// in the `updates` field.
 #[derive(Eq, PartialEq, Clone, Debug)]
 pub struct LUDecomposition<F> {
