@@ -47,7 +47,7 @@ fn main() {
             exit(0);
         },
     };
-
+    // TODO(BASIS INVERSE): Change LU Decomp
     println!("Solving relaxation...");
     let result = data.solve_relaxation::<Carry<RationalBig, LUDecomposition<_>>>();
 
