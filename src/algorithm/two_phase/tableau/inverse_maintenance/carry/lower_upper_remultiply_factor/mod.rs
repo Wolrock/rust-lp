@@ -5,22 +5,24 @@ use std::fmt;
 use std::fmt::Display;
 use std::iter;
 
-use std::time::{Duration, SystemTime};
 use std::thread::sleep;
+use std::time::{Duration, SystemTime};
 
 use num::Zero;
 
 use crate::algorithm::two_phase::matrix_provider::column::{Column, OrderedColumn};
-use crate::algorithm::two_phase::tableau::inverse_maintenance::{ColumnComputationInfo, ops};
+use crate::algorithm::two_phase::tableau::inverse_maintenance::carry::lower_upper_remultiply_factor::eta_file::EtaFile;
+use crate::algorithm::two_phase::tableau::inverse_maintenance::carry::lower_upper_remultiply_factor::permutation::{
+    FullPermutation, Permutation, Rotate,
+};
 use crate::algorithm::two_phase::tableau::inverse_maintenance::carry::BasisInverse;
-use crate::algorithm::two_phase::tableau::inverse_maintenance::carry::lower_upper::eta_file::EtaFile;
-use crate::algorithm::two_phase::tableau::inverse_maintenance::carry::lower_upper::permutation::{FullPermutation, Permutation, RotateToBackPermutation};
+use crate::algorithm::two_phase::tableau::inverse_maintenance::{ops, ColumnComputationInfo};
 use crate::data::linear_algebra::traits::SparseElement;
 use crate::data::linear_algebra::vector::{SparseVector, Vector};
 
 mod decomposition;
-mod permutation;
 mod eta_file;
+mod permutation;
 
 // time_basis_change: SystemTime = SystemTime::now();
 
@@ -41,10 +43,12 @@ pub struct LUDecomposition<F> {
     /// Row permutation `P`.
     ///
     /// The `forward` application of the permutation to rows of `M` corresponds to `PM`.
+    /// FROM INITAL LU
     row_permutation: FullPermutation,
     /// Column permutation `Q`.
     ///
-    /// The `backward` 
+    /// The `backward`
+    /// FROM INITAL LU
     column_permutation: FullPermutation,
     /// Lower triangular matrix `L`.
     ///
@@ -58,7 +62,8 @@ pub struct LUDecomposition<F> {
 
     // TODO(PERFORMANCE): Consider an Option<Permutation> instead to avoid doing identities
     // TODO(ARCHITECTURE): Consider grouping pivot index and eta file in a single update struct.
-    updates: Vec<(EtaFile<F>, RotateToBackPermutation)>,
+    // TODO(DEBUG): Decide format of permutations
+    updates: Vec<(Vec<Rotate>, Vec<Rotate>)>,
 }
 
 impl<F> BasisInverse for LUDecomposition<F>
@@ -91,95 +96,140 @@ where
         }
         debug_assert!(rows.iter().all(|row| row.is_sorted_by_key(|&(j, _)| j)));
 
-        Self::rows(rows)
+        Self::rows(rows);
     }
 
-    fn change_basis(
-        &mut self,
-        pivot_row_index: usize,
-        column: Self::ColumnComputationInfo,
-    ) {
+    fn change_basis(&mut self, pivot_row_index: usize, column: Self::ColumnComputationInfo) {
         let m = self.m();
+        // Index in entering column
+        let mut pivot_column_index = pivot_row_index;
 
+        //********************************
+        // Initial active block boundaries:
+        //********************************
+        // Assume index starting from 0 and being inclusive
+        let mut active_block_row = m;
+        let mut active_block_column = pivot_column_index;
 
-        let pivot_column_index = {
-            // Simplex iteration pivots on `pivot_row_index` p
-            // -> Replace column p of Basis by column a_q (column of pivot in row p) of A
-            // -> `pivot_column_index` represents this column
-            //
-            // Column with a pivot in `pivot_row_index` is leaving
-            let mut pivot_column_index = pivot_row_index;
-            // Compute and store the column permutations applied through Q
-            // -> Q places spike in column p in position m and moves other columns to the left
-            self.column_permutation.forward(&mut pivot_column_index);
-            for (_, q) in &self.updates {
-                Permutation::forward(q, &mut pivot_column_index);
-            }
-            pivot_column_index
-        };
+        // TODO(Debug): march 26
+        //********************************
+        // Find irreducible active block:
+        //********************************
 
-        // Eliminate the subdiagonal introduced by Q using single row transformation R
-        // -> subdiagonal in rows p to m-1
-        // -> R = (I + e_p*r') where r'=(0,..,0,r_{p+1},...,r_m)
-        // H and U have the same columns for p to m-1 and p+1 to m respectively
-        // -> can derive r' = u_bar * U^{-1} where u_bar = (0,..,0,u_{p,p+1},...,u_{p,m})
+        // // 2. Look for column singletons on diagonal of active block in U
+        // // TODO(PERFORMANCE): Parallelize, consider not checking empty columns
+        // let mut column_singletons: Vec<usize> = Vec::new();
+        // for column in active_block_column + 1..=active_block_row {
+        //     if self.upper_triangular[column]
+        //         .iter()
+        //         .filter(|&(i, _)| {
+        //             active_block_column <= i
+        //                 && i <= active_block_row
+        //                 && !column_singletons.contains(i)
+        //         })
+        //         .count()
+        //         == 1
+        //     {
+        //         column_singletons.push(column);
+        //     }
+        // }
+        // let removed_columns = column_singletons.len();
         //
-        // Compute u_bar
-        let (u_bar, indices_to_zero): (Vec<_>, Vec<_>) = ((pivot_column_index + 1)..m)
-            .filter_map(|j| {
-                self.upper_triangular[j]
-                    .binary_search_by_key(&pivot_column_index, |&(i, _)| i)
-                    .ok()
-                    .map(|data_index| (
-                        (j, self.upper_triangular[j][data_index].1.clone()),
-                        (j, data_index),
-                    ))
-            })
-            .unzip();
-        let u_bar = u_bar.into_iter().collect();
-        // Compute r from u_bar
-        let r = self.invert_upper_left(u_bar);
-        let eta_file = EtaFile::new(r, pivot_column_index, self.m());
+        // // 3. Permute singletons from position (k,k) to first column and row of active block
+        // // This will also move all other diagonal elements on the path down by one
+        // // TODO(PERFORMANCE): Parallelize, merge search and permutation?, transpose function
+        // for singleton in column_singletons{
+        //     self.upper_triangular[active_block_column..=singleton].rotate_right(1);
+        //     for col in self.upper_triangular{
+        //         // TODO(Debug): column ref might be wrong
+        //         col = col.into_iter().filter(|&(i,_)| active_block_column <= i && i <= singleton).map(|&(i,_)| if i == singleton{active_block_column}else{i+1}).to_vec();
+        //     }
+        //     active_block_column +=1;
+        // }
+        //
+        // // 4. Find row singletons on diagonal of U
+        // // TODO(PERFORMANCE): Parallelize, maybe have native row major of U
+        // // TODO(DEBUG): Adjust bounds after singleton found (spike column case), to function
+        // // TODO: mem swap function
+        // let mut row_singletons: Vec<usize> = Vec::new();
+        // for row in (active_block_column..=active_block_row).filter(|i| !column_singletons.contains(i)).rev(){
+        //     let row_count = (active_block_column..=active_block_row).filter(|j| !row_singletons.contains(j))
+        //     .filter_map(|j| {
+        //         self.upper_triangular[j]
+        //             .binary_search_by_key(&row, |&(i, _)| i) // TODO(PERFORMANCE): maybe filter or find
+        //             .ok()
+        //     }).count();
+        //     if row_count == 1 {
+        //         row_singletons.push(row);
+        //     }
+        // }
+        // let removed_rows = row_singletons.len();
+        //
+        // // 5. Permute singletons to last row and col of active block
+        // // This will also move the diagonal elements on the path up by one (cyclic permutation in active block)
+        // // TODO(PERFORMANCE): Parallelize
+        // for singleton in row_singletons{
+        //     self.upper_triangular[singleton..=active_block_row].rotate_left(1);
+        //     for col in self.upper_triangular{
+        //         col = col.into_iter().filter(|&(i,_)| singleton <= i && i <= active_block_row).map(|&(i,x)| if i == singleton{&(active_block_row,x)}else{&(i-1,x)}).to_vec();
+        //     }
+        //     active_block_row -=1;
+        // }
+        //
+        // // 6. Form upper Hessenberg by moving spike column to the last column of active block
+        // // TODO(PERFORMANCE): Parallelize
+        // self.upper_triangular[active_block_column..=active_block_row].rotate_left(1);
+        //
+        // // 7. If the spike is now a column singleton it can then leave the active block at the top
+        // //    Repeat until last column is no longer a singleton
+        // while self.upper_triangular[active_block_row].iter().filter(|&(i,_)| active_block_column <= i && i <= active_block_row).count() == 1{
+        //     // TODO(PERFORMANCE): Consider making this a function (column singleton permutation)
+        //     self.upper_triangular[active_block_column..=active_block_row].rotate_right(1);
+        //     for col in self.upper_triangular{
+        //         col = col.into_iter().filter(|&(i,_)| active_block_column <= i && i <= active_block_row).map(|&(i,x)| if i == active_block_row{&(active_block_column,x)}else{&(i+1,x)}).to_vec();
+        //     }
+        //     active_block_column +=1;
+        // }
 
-        // We now have all information needed to recover the triangle, start modifying it
-        // Zero out part of a row that will be rotated to the bottom
-        for (j, data_index) in indices_to_zero {
-            self.upper_triangular[j].remove(data_index);
-        }
-        let Self::ColumnComputationInfo { column: _, mut spike } = column;
-        debug_assert!(spike.iter().is_sorted_by_key(|&(i, _)| i));
+
+        //********************************
+        // Remultiply and factor:
+        //********************************
         
-        // Eliminate row spike
-        eta_file.update_spike_pivot_value(&mut spike);
-        debug_assert!(
-            spike.binary_search_by_key(&pivot_column_index, |&(i, _)| i).is_ok(),
-            "This value should be present to avoid singularity because it will be the bottom corner value.",
-        );
-
-        // Insert the spike for upper
-        self.upper_triangular[pivot_column_index] = spike;
-
-        // Move the spike to the end
-        self.upper_triangular[pivot_column_index..].rotate_left(1);
-
-        // Rotate the "empty except for one value" pivot row to the bottom
-        let q = RotateToBackPermutation::new(pivot_column_index, self.m());
-        for j in pivot_column_index..m {
-            q.forward_sorted(&mut self.upper_triangular[j])
+        // 1. Multiply and convert to row major
+        let mut active_block_product:Vec<Vec<(usize, F)>> = Vec::new(); 
+        for col in (active_block_column...active_block_row){
+            let mut product_row: Vec<(usize, F)> = Vec::new();
+            
         }
+        // 2. Compute LU decomposition of L_{22}U_{22} (active block in U and L)
+        let active_block_lu = LUDecomposition::rows();
+        // Factor out permutations
+        todo!();
 
-        // `upper_triangular` is diagonal again
-        debug_assert!(self.upper_triangular.iter().enumerate().all(|(j, column)| {
-            column.last().unwrap().0 == j && column.is_sorted_by_key(|&(i, _)| i)
-        }));
-        self.updates.push((eta_file, q));
     }
 
     fn generate_column<C: Column>(&self, original_column: C) -> Self::ColumnComputationInfo
     where
         Self::F: ops::Column<C::F>,
     {
-        let rhs = original_column.iter()
+        // PBQ = LU
+
+        // goal: y = B^{-1} c
+        // B = P^T L U Q^T
+        
+        // B y = c
+
+        // P^T L U Q^T y = c
+
+        // L U Q^T y = P c
+
+        // B' = B + (a_s - B e_t)e_t^T
+        // L^-1 P B' Q = U + (L^-1 P a_s - U Q^-1 e_t)e_t^T Q
+
+
+        let rhs = original_column
+            .iter()
             .map(|(mut i, v)| {
                 self.row_permutation.forward(&mut i);
                 (i, v.into())
@@ -207,14 +257,25 @@ where
         Self::ColumnComputationInfo {
             column: SparseVector::new(column, self.m()),
             spike,
-        }
+        };
+        todo!();
+
     }
 
-    fn generate_element<C: Column + OrderedColumn>(&self, i: usize, original_column: C) -> Option<Self::F>
+    fn generate_element<C: Column + OrderedColumn>(
+        &self,
+        i: usize,
+        original_column: C,
+    ) -> Option<Self::F>
     where
         Self::F: ops::Column<C::F>,
     {
-        self.generate_column(original_column).into_column().get(i).cloned()
+        self.generate_column(original_column)
+            .into_column()
+            .get(i)
+            .cloned();
+        todo!();
+
     }
 
     fn should_refactor(&self) -> bool {
@@ -239,7 +300,9 @@ where
         let mut tuples = self.invert_lower_left(w.into_iter().collect());
         self.row_permutation.backward_sorted(&mut tuples);
 
-        SparseVector::new(tuples, self.m())
+        SparseVector::new(tuples, self.m());
+        todo!();
+
     }
 
     fn m(&self) -> usize {
@@ -247,6 +310,7 @@ where
         // == self.column_permutation.len()
         // == self.upper_triangular.len()
         // == self.lower_triangular.len() + 1
+
     }
 }
 
@@ -300,7 +364,7 @@ where
                 Ordering::Greater => {
                     let result_value = self.compute_result(column, rhs_value);
                     self.update_rhs(column, &result_value, &mut rhs);
-                },
+                }
             }
         }
 
@@ -310,7 +374,8 @@ where
     fn compute_result(&self, column: usize, rhs_value: F) -> F {
         debug_assert_eq!(
             self.upper_triangular[column].last().unwrap().0,
-            column, "Needs to have a diagonal element",
+            column,
+            "Needs to have a diagonal element",
         );
 
         let diagonal_item = &self.upper_triangular[column].last().unwrap().1;
@@ -463,7 +528,7 @@ where
                             Ok(index) => self.upper_triangular[j][index].1.to_string(),
                             Err(_) => "0".to_string(),
                         }
-                    },
+                    }
                     Ordering::Less => "".to_string(),
                 };
                 write!(f, "{0:^width$}", value, width = width)?;
@@ -610,7 +675,10 @@ mod test {
                 mock_array: [],
             };
             let result = offdiag.generate_column(column);
-            assert_eq!(result.column, SparseVector::new(vec![(0, RB!(1)), (1, RB!(-1))], 2));
+            assert_eq!(
+                result.column,
+                SparseVector::new(vec![(0, RB!(1)), (1, RB!(-1))], 2)
+            );
 
             let column = Column::Sparse {
                 constraint_values: vec![(1, R64!(1))],
@@ -752,19 +820,27 @@ mod test {
 
             // Columns
             assert_eq!(
-                modified.generate_column(IdentityColumnStruct((0, One))).into_column(),
+                modified
+                    .generate_column(IdentityColumnStruct((0, One)))
+                    .into_column(),
                 SparseVector::standard_basis_vector(0, m),
             );
             assert_eq!(
-                modified.generate_column(IdentityColumnStruct((1, One))).into_column(),
+                modified
+                    .generate_column(IdentityColumnStruct((1, One)))
+                    .into_column(),
                 SparseVector::new(vec![(1, RB!(-3, 4)), (2, RB!(9, 16)), (3, RB!(1, 2))], m),
             );
             assert_eq!(
-                modified.generate_column(IdentityColumnStruct((2, One))).into_column(),
+                modified
+                    .generate_column(IdentityColumnStruct((2, One)))
+                    .into_column(),
                 SparseVector::new(vec![(2, RB!(1, 4))], m),
             );
             assert_eq!(
-                modified.generate_column(IdentityColumnStruct((3, One))).into_column(),
+                modified
+                    .generate_column(IdentityColumnStruct((3, One)))
+                    .into_column(),
                 SparseVector::new(vec![(1, RB!(5, 8)), (2, RB!(-15, 32)), (3, RB!(-1, 4))], m),
             );
 
@@ -801,7 +877,13 @@ mod test {
                     vec![(0, RB!(12)), (1, RB!(22))],
                     vec![(0, RB!(13)), (1, RB!(23)), (2, RB!(33))],
                     vec![(0, RB!(14)), (1, RB!(24)), (2, RB!(34)), (3, RB!(44))],
-                    vec![(0, RB!(15)), (1, RB!(25)), (2, RB!(35)), (3, RB!(45)), (4, RB!(55))],
+                    vec![
+                        (0, RB!(15)),
+                        (1, RB!(25)),
+                        (2, RB!(35)),
+                        (3, RB!(45)),
+                        (4, RB!(55)),
+                    ],
                 ],
                 updates: vec![],
             };
@@ -823,14 +905,23 @@ mod test {
                     vec![(0, RB!(13)), (1, RB!(33))],
                     vec![(0, RB!(14)), (1, RB!(34)), (2, RB!(44))],
                     vec![(0, RB!(15)), (1, RB!(35)), (2, RB!(45)), (3, RB!(55))],
-                    vec![(0, RB!(12)), (1, RB!(32)), (2, RB!(42)), (4, RB!(-215, 363))],
+                    vec![
+                        (0, RB!(12)),
+                        (1, RB!(32)),
+                        (2, RB!(42)),
+                        (4, RB!(-215, 363)),
+                    ],
                 ],
                 updates: vec![(
-                    EtaFile::new(vec![
+                    EtaFile::new(
+                        vec![
                             (2, RB!(23, 33)),
                             (3, RB!(24 * 33 - 34 * 23, 33 * 44)),
                             (4, RB!(43, 7986)),
-                        ], 1, m),
+                        ],
+                        1,
+                        m,
+                    ),
                     RotateToBackPermutation::new(1, m),
                 )],
             };
@@ -838,29 +929,71 @@ mod test {
 
             // Columns
             assert_eq!(
-                modified.generate_column(IdentityColumnStruct((0, One))).into_column(),
+                modified
+                    .generate_column(IdentityColumnStruct((0, One)))
+                    .into_column(),
                 SparseVector::new(vec![(0, RB!(1, 11))], m),
             );
             assert_eq!(
-                modified.generate_column(IdentityColumnStruct((1, One))).into_column(),
-                SparseVector::new(vec![(0, RB!(-2, 11)), (1, RB!(-363, 215)), (2, RB!(-1, 43)), (3, RB!(693, 430))], m),
+                modified
+                    .generate_column(IdentityColumnStruct((1, One)))
+                    .into_column(),
+                SparseVector::new(
+                    vec![
+                        (0, RB!(-2, 11)),
+                        (1, RB!(-363, 215)),
+                        (2, RB!(-1, 43)),
+                        (3, RB!(693, 430))
+                    ],
+                    m
+                ),
             );
             assert_eq!(
-                modified.generate_column(IdentityColumnStruct((2, One))).into_column(),
-                SparseVector::new(vec![(0, RB!(1, 11)), (1, RB!(253, 215)), (2, RB!(2, 43)), (3, RB!(-483, 430))], m),
+                modified
+                    .generate_column(IdentityColumnStruct((2, One)))
+                    .into_column(),
+                SparseVector::new(
+                    vec![
+                        (0, RB!(1, 11)),
+                        (1, RB!(253, 215)),
+                        (2, RB!(2, 43)),
+                        (3, RB!(-483, 430))
+                    ],
+                    m
+                ),
             );
             assert_eq!(
-                modified.generate_column(IdentityColumnStruct((3, One))).into_column(),
+                modified
+                    .generate_column(IdentityColumnStruct((3, One)))
+                    .into_column(),
                 SparseVector::new(vec![(1, RB!(1, 86)), (2, RB!(-1, 43)), (3, RB!(1, 86))], m),
             );
             assert_eq!(
-                modified.generate_column(IdentityColumnStruct((4, One))).into_column(),
-                SparseVector::new(vec![(1, RB!(1, 110)), (3, RB!(-3, 110)), (4, RB!(1, 55))], m),
+                modified
+                    .generate_column(IdentityColumnStruct((4, One)))
+                    .into_column(),
+                SparseVector::new(
+                    vec![(1, RB!(1, 110)), (3, RB!(-3, 110)), (4, RB!(1, 55))],
+                    m
+                ),
             );
             // Sum of two
             assert_eq!(
-                modified.generate_column(matrix_data::Column::TwoSlack([(0, RB!(1)), (1, RB!(1))], [])).into_column(),
-                SparseVector::new(vec![(0, RB!(-1, 11)), (1, RB!(-363, 215)), (2, RB!(-1, 43)), (3, RB!(693, 430))], m),
+                modified
+                    .generate_column(matrix_data::Column::TwoSlack(
+                        [(0, RB!(1)), (1, RB!(1))],
+                        []
+                    ))
+                    .into_column(),
+                SparseVector::new(
+                    vec![
+                        (0, RB!(-1, 11)),
+                        (1, RB!(-363, 215)),
+                        (2, RB!(-1, 43)),
+                        (3, RB!(693, 430))
+                    ],
+                    m
+                ),
             );
 
             // Rows
@@ -870,7 +1003,15 @@ mod test {
             );
             assert_eq!(
                 modified.basis_inverse_row(1),
-                SparseVector::new(vec![(1, RB!(-363, 215)), (2, RB!(253, 215)), (3, RB!(1, 86)), (4, RB!(1, 110))], m),
+                SparseVector::new(
+                    vec![
+                        (1, RB!(-363, 215)),
+                        (2, RB!(253, 215)),
+                        (3, RB!(1, 86)),
+                        (4, RB!(1, 110))
+                    ],
+                    m
+                ),
             );
             assert_eq!(
                 modified.basis_inverse_row(2),
@@ -878,7 +1019,15 @@ mod test {
             );
             assert_eq!(
                 modified.basis_inverse_row(3),
-                SparseVector::new(vec![(1, RB!(693, 430)), (2, RB!(-483, 430)), (3, RB!(1, 86)), (4, RB!(-3, 110))], m),
+                SparseVector::new(
+                    vec![
+                        (1, RB!(693, 430)),
+                        (2, RB!(-483, 430)),
+                        (3, RB!(1, 86)),
+                        (4, RB!(-3, 110))
+                    ],
+                    m
+                ),
             );
             assert_eq!(
                 modified.basis_inverse_row(4),

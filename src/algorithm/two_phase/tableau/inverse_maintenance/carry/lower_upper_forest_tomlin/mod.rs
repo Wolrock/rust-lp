@@ -1,29 +1,30 @@
-//! # New LU decomposition
+//! # LU decomposition
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
 use std::fmt;
 use std::fmt::Display;
 use std::iter;
 
-//timing
-use std::time::{Duration, Instant};
+use std::thread::sleep;
+use std::time::{Duration, SystemTime};
 
 use num::Zero;
 
 use crate::algorithm::two_phase::matrix_provider::column::{Column, OrderedColumn};
-use crate::algorithm::two_phase::tableau::inverse_maintenance::{ColumnComputationInfo, ops};
-use crate::algorithm::two_phase::tableau::inverse_maintenance::carry::BasisInverse;
 use crate::algorithm::two_phase::tableau::inverse_maintenance::carry::lower_upper::eta_file::EtaFile;
-use crate::algorithm::two_phase::tableau::inverse_maintenance::carry::lower_upper::permutation::{FullPermutation, Permutation, RotateToBackPermutation};
+use crate::algorithm::two_phase::tableau::inverse_maintenance::carry::lower_upper::permutation::{
+    FullPermutation, Permutation, RotateToBackPermutation,
+};
+use crate::algorithm::two_phase::tableau::inverse_maintenance::carry::BasisInverse;
+use crate::algorithm::two_phase::tableau::inverse_maintenance::{ops, ColumnComputationInfo};
 use crate::data::linear_algebra::traits::SparseElement;
 use crate::data::linear_algebra::vector::{SparseVector, Vector};
 
-
 mod decomposition;
-mod permutation;
 mod eta_file;
+mod permutation;
 
-
+// time_basis_change: SystemTime = SystemTime::now();
 
 /// Decompose a matrix `B` into `PBQ = LU` where
 ///
@@ -38,14 +39,14 @@ mod eta_file;
 /// `P` and `Q` are "full" permutations, not to be confused with the simpler "rotating" permutations
 /// in the `updates` field.
 #[derive(Eq, PartialEq, Clone, Debug)]
-pub struct NewLUDecomposition<F> {
+pub struct LUDecomposition<F> {
     /// Row permutation `P`.
     ///
     /// The `forward` application of the permutation to rows of `M` corresponds to `PM`.
     row_permutation: FullPermutation,
     /// Column permutation `Q`.
     ///
-    /// The
+    /// The `backward`
     column_permutation: FullPermutation,
     /// Lower triangular matrix `L`.
     ///
@@ -62,7 +63,7 @@ pub struct NewLUDecomposition<F> {
     updates: Vec<(EtaFile<F>, RotateToBackPermutation)>,
 }
 
-impl<F> BasisInverse for NewLUDecomposition<F>
+impl<F> BasisInverse for LUDecomposition<F>
 where
     F: ops::Internal + ops::InternalHR,
 {
@@ -95,17 +96,18 @@ where
         Self::rows(rows)
     }
 
-    fn change_basis(
-        &mut self,
-        pivot_row_index: usize,
-        column: Self::ColumnComputationInfo,
-    ) {
-        
+    fn change_basis(&mut self, pivot_row_index: usize, column: Self::ColumnComputationInfo) {
         let m = self.m();
 
         let pivot_column_index = {
+            // Simplex iteration pivots on `pivot_row_index` p
+            // -> Replace column p of Basis by column a_q (column of pivot in row p) of A
+            // -> `pivot_column_index` represents this column
+            //
             // Column with a pivot in `pivot_row_index` is leaving
             let mut pivot_column_index = pivot_row_index;
+            // Compute and store the column permutations applied through Q
+            // -> Q places spike in column p in position m and moves other columns to the left
             self.column_permutation.forward(&mut pivot_column_index);
             for (_, q) in &self.updates {
                 Permutation::forward(q, &mut pivot_column_index);
@@ -113,20 +115,28 @@ where
             pivot_column_index
         };
 
-
-        // Compute r
+        // Eliminate the subdiagonal introduced by Q using single row transformation R
+        // -> subdiagonal in rows p to m-1
+        // -> R = (I + e_p*r') where r'=(0,..,0,r_{p+1},...,r_m)
+        // H and U have the same columns for p to m-1 and p+1 to m respectively
+        // -> can derive r' = u_bar * U^{-1} where u_bar = (0,..,0,u_{p,p+1},...,u_{p,m})
+        //
+        // Compute u_bar
         let (u_bar, indices_to_zero): (Vec<_>, Vec<_>) = ((pivot_column_index + 1)..m)
             .filter_map(|j| {
                 self.upper_triangular[j]
                     .binary_search_by_key(&pivot_column_index, |&(i, _)| i)
                     .ok()
-                    .map(|data_index| (
-                        (j, self.upper_triangular[j][data_index].1.clone()),
-                        (j, data_index),
-                    ))
+                    .map(|data_index| {
+                        (
+                            (j, self.upper_triangular[j][data_index].1.clone()),
+                            (j, data_index),
+                        )
+                    })
             })
             .unzip();
         let u_bar = u_bar.into_iter().collect();
+        // Compute r from u_bar
         let r = self.invert_upper_left(u_bar);
         let eta_file = EtaFile::new(r, pivot_column_index, self.m());
 
@@ -135,14 +145,18 @@ where
         for (j, data_index) in indices_to_zero {
             self.upper_triangular[j].remove(data_index);
         }
-        let Self::ColumnComputationInfo { column: _, mut spike } = column;
+        let Self::ColumnComputationInfo {
+            column: _,
+            mut spike,
+        } = column;
         debug_assert!(spike.iter().is_sorted_by_key(|&(i, _)| i));
-
+        // Eliminate row spike
         eta_file.update_spike_pivot_value(&mut spike);
         debug_assert!(
             spike.binary_search_by_key(&pivot_column_index, |&(i, _)| i).is_ok(),
             "This value should be present to avoid singularity because it will be the bottom corner value.",
         );
+
         // Insert the spike for upper
         self.upper_triangular[pivot_column_index] = spike;
 
@@ -166,7 +180,8 @@ where
     where
         Self::F: ops::Column<C::F>,
     {
-        let rhs = original_column.iter()
+        let rhs = original_column
+            .iter()
             .map(|(mut i, v)| {
                 self.row_permutation.forward(&mut i);
                 (i, v.into())
@@ -197,11 +212,18 @@ where
         }
     }
 
-    fn generate_element<C: Column + OrderedColumn>(&self, i: usize, original_column: C) -> Option<Self::F>
+    fn generate_element<C: Column + OrderedColumn>(
+        &self,
+        i: usize,
+        original_column: C,
+    ) -> Option<Self::F>
     where
         Self::F: ops::Column<C::F>,
     {
-        self.generate_column(original_column).into_column().get(i).cloned()
+        self.generate_column(original_column)
+            .into_column()
+            .get(i)
+            .cloned()
     }
 
     fn should_refactor(&self) -> bool {
@@ -237,7 +259,7 @@ where
     }
 }
 
-impl<F> NewLUDecomposition<F>
+impl<F> LUDecomposition<F>
 where
     F: ops::Internal + ops::InternalHR,
 {
@@ -287,7 +309,7 @@ where
                 Ordering::Greater => {
                     let result_value = self.compute_result(column, rhs_value);
                     self.update_rhs(column, &result_value, &mut rhs);
-                },
+                }
             }
         }
 
@@ -297,7 +319,8 @@ where
     fn compute_result(&self, column: usize, rhs_value: F) -> F {
         debug_assert_eq!(
             self.upper_triangular[column].last().unwrap().0,
-            column, "Needs to have a diagonal element",
+            column,
+            "Needs to have a diagonal element",
         );
 
         let diagonal_item = &self.upper_triangular[column].last().unwrap().1;
@@ -397,7 +420,7 @@ impl<F: SparseElement<F>> ColumnComputationInfo<F> for ColumnAndSpike<F> {
     }
 }
 
-impl<F> Display for NewLUDecomposition<F>
+impl<F> Display for LUDecomposition<F>
 where
     F: ops::Internal + ops::InternalHR,
 {
@@ -450,7 +473,7 @@ where
                             Ok(index) => self.upper_triangular[j][index].1.to_string(),
                             Err(_) => "0".to_string(),
                         }
-                    },
+                    }
                     Ordering::Less => "".to_string(),
                 };
                 write!(f, "{0:^width$}", value, width = width)?;
@@ -486,7 +509,7 @@ mod test {
     use crate::algorithm::two_phase::matrix_provider::matrix_data::Column;
     use crate::algorithm::two_phase::tableau::inverse_maintenance::carry::BasisInverse;
     use crate::algorithm::two_phase::tableau::inverse_maintenance::carry::lower_upper::ColumnAndSpike;
-    use crate::algorithm::two_phase::tableau::inverse_maintenance::carry::lower_upper::NewLUDecomposition;
+    use crate::algorithm::two_phase::tableau::inverse_maintenance::carry::lower_upper::LUDecomposition;
     use crate::algorithm::two_phase::tableau::inverse_maintenance::carry::lower_upper::permutation::FullPermutation;
     use crate::algorithm::two_phase::tableau::inverse_maintenance::ColumnComputationInfo;
     use crate::data::linear_algebra::vector::{SparseVector, Vector};
@@ -497,7 +520,7 @@ mod test {
 
         #[test]
         fn identity_empty() {
-            let identity = NewLUDecomposition::<RationalBig>::identity(2);
+            let identity = LUDecomposition::<RationalBig>::identity(2);
 
             let column = BTreeMap::new();
             let result = identity.invert_upper_right(column);
@@ -515,7 +538,7 @@ mod test {
 
         #[test]
         fn identity_single() {
-            let identity = NewLUDecomposition::<RationalBig>::identity(2);
+            let identity = LUDecomposition::<RationalBig>::identity(2);
 
             let column = vec![(0, RB!(1))];
             let result = identity.invert_upper_right(column.clone().into_iter().collect());
@@ -546,7 +569,7 @@ mod test {
 
         #[test]
         fn identity_double() {
-            let identity = NewLUDecomposition::<RationalBig>::identity(2);
+            let identity = LUDecomposition::<RationalBig>::identity(2);
 
             let column = vec![(0, RB!(1)), (1, RB!(1))];
             let result = identity.invert_upper_right(column.clone().into_iter().collect());
@@ -564,7 +587,7 @@ mod test {
 
         #[test]
         fn offdiagonal_empty() {
-            let offdiag = NewLUDecomposition {
+            let offdiag = LUDecomposition {
                 row_permutation: FullPermutation::identity(2),
                 column_permutation: FullPermutation::identity(2),
                 lower_triangular: vec![vec![(1, RB!(1))]],
@@ -583,7 +606,7 @@ mod test {
 
         #[test]
         fn offdiagonal_single() {
-            let offdiag = NewLUDecomposition {
+            let offdiag = LUDecomposition {
                 row_permutation: FullPermutation::identity(2),
                 column_permutation: FullPermutation::identity(2),
                 lower_triangular: vec![vec![(1, RB!(1))]],
@@ -597,7 +620,10 @@ mod test {
                 mock_array: [],
             };
             let result = offdiag.generate_column(column);
-            assert_eq!(result.column, SparseVector::new(vec![(0, RB!(1)), (1, RB!(-1))], 2));
+            assert_eq!(
+                result.column,
+                SparseVector::new(vec![(0, RB!(1)), (1, RB!(-1))], 2)
+            );
 
             let column = Column::Sparse {
                 constraint_values: vec![(1, R64!(1))],
@@ -618,7 +644,7 @@ mod test {
         /// Spike is the column which is already there.
         #[test]
         fn no_change() {
-            let mut initial = NewLUDecomposition::<RationalBig>::identity(3);
+            let mut initial = LUDecomposition::<RationalBig>::identity(3);
 
             let spike = vec![(1, RB!(1))];
             let column_computation_info = ColumnAndSpike {
@@ -628,7 +654,7 @@ mod test {
             initial.change_basis(1, column_computation_info);
             let modified = initial;
 
-            let mut expected = NewLUDecomposition::<RationalBig>::identity(3);
+            let mut expected = LUDecomposition::<RationalBig>::identity(3);
             expected.updates.push((
                 EtaFile::new(vec![], 1, 3),
                 RotateToBackPermutation::new(1, 3),
@@ -638,7 +664,7 @@ mod test {
 
         #[test]
         fn from_identity_2() {
-            let mut identity = NewLUDecomposition::<RationalBig>::identity(2);
+            let mut identity = LUDecomposition::<RationalBig>::identity(2);
 
             let spike = vec![(0, RB!(1)), (1, RB!(1))];
             let column_computation_info = ColumnAndSpike {
@@ -648,7 +674,7 @@ mod test {
             identity.change_basis(0, column_computation_info);
             let modified = identity;
 
-            let expected = NewLUDecomposition {
+            let expected = LUDecomposition {
                 row_permutation: FullPermutation::identity(2),
                 column_permutation: FullPermutation::identity(2),
                 lower_triangular: vec![vec![]],
@@ -665,7 +691,7 @@ mod test {
         #[test]
         fn from_5x5_identity_no_r() {
             let m = 5;
-            let mut initial = NewLUDecomposition::<RationalBig>::identity(5);
+            let mut initial = LUDecomposition::<RationalBig>::identity(5);
 
             let spike = vec![(0, RB!(2)), (1, RB!(3)), (2, RB!(5)), (3, RB!(7))];
             let column_computation_info = ColumnAndSpike {
@@ -675,7 +701,7 @@ mod test {
             initial.change_basis(1, column_computation_info);
             let modified = initial;
 
-            let expected = NewLUDecomposition {
+            let expected = LUDecomposition {
                 row_permutation: FullPermutation::identity(m),
                 column_permutation: FullPermutation::identity(m),
                 lower_triangular: vec![vec![]; m - 1],
@@ -698,7 +724,7 @@ mod test {
         #[test]
         fn from_4x4_identity() {
             let m = 4;
-            let mut initial = NewLUDecomposition {
+            let mut initial = LUDecomposition {
                 row_permutation: FullPermutation::identity(m),
                 column_permutation: FullPermutation::identity(m),
                 lower_triangular: vec![vec![]; m - 1],
@@ -720,7 +746,7 @@ mod test {
             initial.change_basis(1, column_computation_info);
             let modified = initial;
 
-            let expected = NewLUDecomposition {
+            let expected = LUDecomposition {
                 row_permutation: FullPermutation::identity(m),
                 column_permutation: FullPermutation::identity(m),
                 lower_triangular: vec![vec![]; m - 1],
@@ -739,19 +765,27 @@ mod test {
 
             // Columns
             assert_eq!(
-                modified.generate_column(IdentityColumnStruct((0, One))).into_column(),
+                modified
+                    .generate_column(IdentityColumnStruct((0, One)))
+                    .into_column(),
                 SparseVector::standard_basis_vector(0, m),
             );
             assert_eq!(
-                modified.generate_column(IdentityColumnStruct((1, One))).into_column(),
+                modified
+                    .generate_column(IdentityColumnStruct((1, One)))
+                    .into_column(),
                 SparseVector::new(vec![(1, RB!(-3, 4)), (2, RB!(9, 16)), (3, RB!(1, 2))], m),
             );
             assert_eq!(
-                modified.generate_column(IdentityColumnStruct((2, One))).into_column(),
+                modified
+                    .generate_column(IdentityColumnStruct((2, One)))
+                    .into_column(),
                 SparseVector::new(vec![(2, RB!(1, 4))], m),
             );
             assert_eq!(
-                modified.generate_column(IdentityColumnStruct((3, One))).into_column(),
+                modified
+                    .generate_column(IdentityColumnStruct((3, One)))
+                    .into_column(),
                 SparseVector::new(vec![(1, RB!(5, 8)), (2, RB!(-15, 32)), (3, RB!(-1, 4))], m),
             );
 
@@ -779,7 +813,7 @@ mod test {
         #[test]
         fn from_5x5_identity() {
             let m = 5;
-            let mut initial = NewLUDecomposition {
+            let mut initial = LUDecomposition {
                 row_permutation: FullPermutation::identity(m),
                 column_permutation: FullPermutation::identity(m),
                 lower_triangular: vec![vec![]; m - 1],
@@ -788,7 +822,13 @@ mod test {
                     vec![(0, RB!(12)), (1, RB!(22))],
                     vec![(0, RB!(13)), (1, RB!(23)), (2, RB!(33))],
                     vec![(0, RB!(14)), (1, RB!(24)), (2, RB!(34)), (3, RB!(44))],
-                    vec![(0, RB!(15)), (1, RB!(25)), (2, RB!(35)), (3, RB!(45)), (4, RB!(55))],
+                    vec![
+                        (0, RB!(15)),
+                        (1, RB!(25)),
+                        (2, RB!(35)),
+                        (3, RB!(45)),
+                        (4, RB!(55)),
+                    ],
                 ],
                 updates: vec![],
             };
@@ -801,7 +841,7 @@ mod test {
             initial.change_basis(1, column_computation_info);
             let modified = initial;
 
-            let expected = NewLUDecomposition {
+            let expected = LUDecomposition {
                 row_permutation: FullPermutation::identity(m),
                 column_permutation: FullPermutation::identity(m),
                 lower_triangular: vec![vec![]; m - 1],
@@ -810,14 +850,23 @@ mod test {
                     vec![(0, RB!(13)), (1, RB!(33))],
                     vec![(0, RB!(14)), (1, RB!(34)), (2, RB!(44))],
                     vec![(0, RB!(15)), (1, RB!(35)), (2, RB!(45)), (3, RB!(55))],
-                    vec![(0, RB!(12)), (1, RB!(32)), (2, RB!(42)), (4, RB!(-215, 363))],
+                    vec![
+                        (0, RB!(12)),
+                        (1, RB!(32)),
+                        (2, RB!(42)),
+                        (4, RB!(-215, 363)),
+                    ],
                 ],
                 updates: vec![(
-                    EtaFile::new(vec![
+                    EtaFile::new(
+                        vec![
                             (2, RB!(23, 33)),
                             (3, RB!(24 * 33 - 34 * 23, 33 * 44)),
                             (4, RB!(43, 7986)),
-                        ], 1, m),
+                        ],
+                        1,
+                        m,
+                    ),
                     RotateToBackPermutation::new(1, m),
                 )],
             };
@@ -825,29 +874,71 @@ mod test {
 
             // Columns
             assert_eq!(
-                modified.generate_column(IdentityColumnStruct((0, One))).into_column(),
+                modified
+                    .generate_column(IdentityColumnStruct((0, One)))
+                    .into_column(),
                 SparseVector::new(vec![(0, RB!(1, 11))], m),
             );
             assert_eq!(
-                modified.generate_column(IdentityColumnStruct((1, One))).into_column(),
-                SparseVector::new(vec![(0, RB!(-2, 11)), (1, RB!(-363, 215)), (2, RB!(-1, 43)), (3, RB!(693, 430))], m),
+                modified
+                    .generate_column(IdentityColumnStruct((1, One)))
+                    .into_column(),
+                SparseVector::new(
+                    vec![
+                        (0, RB!(-2, 11)),
+                        (1, RB!(-363, 215)),
+                        (2, RB!(-1, 43)),
+                        (3, RB!(693, 430))
+                    ],
+                    m
+                ),
             );
             assert_eq!(
-                modified.generate_column(IdentityColumnStruct((2, One))).into_column(),
-                SparseVector::new(vec![(0, RB!(1, 11)), (1, RB!(253, 215)), (2, RB!(2, 43)), (3, RB!(-483, 430))], m),
+                modified
+                    .generate_column(IdentityColumnStruct((2, One)))
+                    .into_column(),
+                SparseVector::new(
+                    vec![
+                        (0, RB!(1, 11)),
+                        (1, RB!(253, 215)),
+                        (2, RB!(2, 43)),
+                        (3, RB!(-483, 430))
+                    ],
+                    m
+                ),
             );
             assert_eq!(
-                modified.generate_column(IdentityColumnStruct((3, One))).into_column(),
+                modified
+                    .generate_column(IdentityColumnStruct((3, One)))
+                    .into_column(),
                 SparseVector::new(vec![(1, RB!(1, 86)), (2, RB!(-1, 43)), (3, RB!(1, 86))], m),
             );
             assert_eq!(
-                modified.generate_column(IdentityColumnStruct((4, One))).into_column(),
-                SparseVector::new(vec![(1, RB!(1, 110)), (3, RB!(-3, 110)), (4, RB!(1, 55))], m),
+                modified
+                    .generate_column(IdentityColumnStruct((4, One)))
+                    .into_column(),
+                SparseVector::new(
+                    vec![(1, RB!(1, 110)), (3, RB!(-3, 110)), (4, RB!(1, 55))],
+                    m
+                ),
             );
             // Sum of two
             assert_eq!(
-                modified.generate_column(matrix_data::Column::TwoSlack([(0, RB!(1)), (1, RB!(1))], [])).into_column(),
-                SparseVector::new(vec![(0, RB!(-1, 11)), (1, RB!(-363, 215)), (2, RB!(-1, 43)), (3, RB!(693, 430))], m),
+                modified
+                    .generate_column(matrix_data::Column::TwoSlack(
+                        [(0, RB!(1)), (1, RB!(1))],
+                        []
+                    ))
+                    .into_column(),
+                SparseVector::new(
+                    vec![
+                        (0, RB!(-1, 11)),
+                        (1, RB!(-363, 215)),
+                        (2, RB!(-1, 43)),
+                        (3, RB!(693, 430))
+                    ],
+                    m
+                ),
             );
 
             // Rows
@@ -857,7 +948,15 @@ mod test {
             );
             assert_eq!(
                 modified.basis_inverse_row(1),
-                SparseVector::new(vec![(1, RB!(-363, 215)), (2, RB!(253, 215)), (3, RB!(1, 86)), (4, RB!(1, 110))], m),
+                SparseVector::new(
+                    vec![
+                        (1, RB!(-363, 215)),
+                        (2, RB!(253, 215)),
+                        (3, RB!(1, 86)),
+                        (4, RB!(1, 110))
+                    ],
+                    m
+                ),
             );
             assert_eq!(
                 modified.basis_inverse_row(2),
@@ -865,7 +964,15 @@ mod test {
             );
             assert_eq!(
                 modified.basis_inverse_row(3),
-                SparseVector::new(vec![(1, RB!(693, 430)), (2, RB!(-483, 430)), (3, RB!(1, 86)), (4, RB!(-3, 110))], m),
+                SparseVector::new(
+                    vec![
+                        (1, RB!(693, 430)),
+                        (2, RB!(-483, 430)),
+                        (3, RB!(1, 86)),
+                        (4, RB!(-3, 110))
+                    ],
+                    m
+                ),
             );
             assert_eq!(
                 modified.basis_inverse_row(4),

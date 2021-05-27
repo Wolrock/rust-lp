@@ -20,7 +20,8 @@ use crate::data::linear_algebra::traits::Element;
 use crate::data::linear_algebra::vector::{DenseVector, SparseVector, Vector};
 
 pub mod basis_inverse_rows;
-pub mod lower_upper;
+pub mod lower_upper_forest_tomlin;
+pub mod lower_upper_remultiply_factor;
 
 /// The carry matrix represents a basis inverse.
 ///

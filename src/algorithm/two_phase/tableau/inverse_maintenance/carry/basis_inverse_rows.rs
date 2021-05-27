@@ -10,7 +10,7 @@ use crate::algorithm::two_phase::matrix_provider::column::{Column, OrderedColumn
 use crate::algorithm::two_phase::matrix_provider::column::identity::{IdentityColumnStruct, One};
 use crate::algorithm::two_phase::tableau::inverse_maintenance::{ColumnComputationInfo, ops};
 use crate::algorithm::two_phase::tableau::inverse_maintenance::carry::{BasisInverse, RemoveBasisPart};
-use crate::algorithm::two_phase::tableau::inverse_maintenance::carry::lower_upper::LUDecomposition;
+use crate::algorithm::two_phase::tableau::inverse_maintenance::carry::lower_upper_remultiply_factor::LUDecomposition;
 use crate::algorithm::utilities::remove_indices;
 use crate::data::linear_algebra::traits::{NotZero, SparseElement};
 use crate::data::linear_algebra::vector::{SparseVector, Vector};
@@ -39,12 +39,9 @@ where
     ///
     /// * `pivot_row_index`: Index of the pivot row.
     /// * `column`: Column relative to the current basis to be entered into that basis.
-    fn normalize_pivot_row(
-        &mut self,
-        pivot_row_index: usize,
-        column: &SparseVector<F, F>,
-    ) {
-        let pivot_value = column.get(pivot_row_index)
+    fn normalize_pivot_row(&mut self, pivot_row_index: usize, column: &SparseVector<F, F>) {
+        let pivot_value = column
+            .get(pivot_row_index)
             .expect("Pivot value can't be zero.");
 
         self.rows[pivot_row_index].element_wise_divide(pivot_value);
@@ -60,11 +57,7 @@ where
     /// # Note
     ///
     /// This method requires a normalized pivot element.
-    fn row_reduce(
-        &mut self,
-        pivot_row_index: usize,
-        column: &SparseVector<F, F>,
-    ) {
+    fn row_reduce(&mut self, pivot_row_index: usize, column: &SparseVector<F, F>) {
         debug_assert!(pivot_row_index < self.m());
 
         // TODO(OPTIMIZATION): Improve the below algorithm; when does SIMD kick in?
@@ -73,9 +66,10 @@ where
 
         for (edit_row_index, column_value) in column.iter_values() {
             match edit_row_index.cmp(&pivot_row_index) {
-                Ordering::Less => rows_left[*edit_row_index]
-                    .add_multiple_of_row(&-column_value, &rows_middle),
-                Ordering::Equal => {},
+                Ordering::Less => {
+                    rows_left[*edit_row_index].add_multiple_of_row(&-column_value, &rows_middle)
+                }
+                Ordering::Equal => {}
                 Ordering::Greater => rows_right[*edit_row_index - (pivot_row_index + 1)]
                     .add_multiple_of_row(&-column_value, &rows_middle),
             }
@@ -96,7 +90,9 @@ where
 
     fn identity(m: usize) -> Self {
         Self {
-            rows: (0..m).map(|i| SparseVector::standard_basis_vector(i, m)).collect(),
+            rows: (0..m)
+                .map(|i| SparseVector::standard_basis_vector(i, m))
+                .collect(),
         }
     }
 
@@ -119,20 +115,15 @@ where
             }
         }
 
-        let rows = row_major.into_iter()
+        let rows = row_major
+            .into_iter()
             .map(|tuples| SparseVector::new(tuples, m))
             .collect();
 
-        Self {
-            rows,
-        }
+        Self { rows }
     }
 
-    fn change_basis(
-        &mut self,
-        pivot_row_index: usize,
-        column: Self::ColumnComputationInfo,
-    ) {
+    fn change_basis(&mut self, pivot_row_index: usize, column: Self::ColumnComputationInfo) {
         debug_assert!(pivot_row_index < self.m());
         debug_assert_eq!(column.column().len(), self.m());
 
@@ -141,7 +132,10 @@ where
         self.row_reduce(pivot_row_index, column.column());
     }
 
-    fn generate_column<C: Column + OrderedColumn>(&self, original_column: C) -> Self::ColumnComputationInfo
+    fn generate_column<C: Column + OrderedColumn>(
+        &self,
+        original_column: C,
+    ) -> Self::ColumnComputationInfo
     where
         Self::F: ops::Column<C::F>,
     {
