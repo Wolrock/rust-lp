@@ -1,15 +1,14 @@
 /// # LU Decomposition
 ///
-
 use std::cmp::Ordering;
 use std::mem;
 use std::ops::{Mul, Neg, Sub};
 
 use num::Zero;
 
-use crate::algorithm::two_phase::tableau::inverse_maintenance::carry::lower_upper::decomposition::pivoting::{Markowitz, PivotRule};
-use crate::algorithm::two_phase::tableau::inverse_maintenance::carry::lower_upper::LUDecomposition;
-use crate::algorithm::two_phase::tableau::inverse_maintenance::carry::lower_upper::permutation::{FullPermutation, Permutation, SwapPermutation};
+use crate::algorithm::two_phase::tableau::inverse_maintenance::carry::lower_upper_forest_tomlin::decomposition::pivoting::{Markowitz, PivotRule};
+use crate::algorithm::two_phase::tableau::inverse_maintenance::carry::lower_upper_forest_tomlin::LUDecomposition;
+use crate::algorithm::two_phase::tableau::inverse_maintenance::carry::lower_upper_forest_tomlin::permutation::{FullPermutation, Permutation, SwapPermutation};
 use crate::algorithm::two_phase::tableau::inverse_maintenance::ops;
 
 mod pivoting;
@@ -25,7 +24,9 @@ where
     /// * `rows`: A row major representation of the basis columns.
     #[must_use]
     pub fn rows(mut rows: Vec<Vec<(usize, F)>>) -> Self {
-        debug_assert!(rows.iter().all(|row| row.iter().is_sorted_by_key(|&(i, _)| i)));
+        debug_assert!(rows
+            .iter()
+            .all(|row| row.iter().is_sorted_by_key(|&(i, _)| i)));
 
         // The number of columns gets smaller over time.
         let m = rows.len();
@@ -42,13 +43,17 @@ where
         let (mut nnz_row, mut nnz_column) = count_nonzeros(&rows);
         let pivot_rule = Markowitz::new();
         for k in 0..m {
-            let (pivot_row, pivot_column) = pivot_rule.choose_pivot(&nnz_row, &nnz_column, &rows, k);
+            let (pivot_row, pivot_column) =
+                pivot_rule.choose_pivot(&nnz_row, &nnz_column, &rows, k);
             // Administration for swapping (pivot_row, pivot_column) to (k, k)
             swap(
-                pivot_row, pivot_column,
+                pivot_row,
+                pivot_column,
                 k,
-                &mut row_permutation, &mut column_permutation,
-                &mut nnz_row, &mut nnz_column,
+                &mut row_permutation,
+                &mut column_permutation,
+                &mut nnz_row,
+                &mut nnz_column,
                 &mut rows,
                 &mut lower_triangular_row_major,
             );
@@ -80,11 +85,12 @@ where
 
             // Eliminate the zeros below the pivot
             for (i, ratio) in ratios_to_subtract {
-                let (nnz_row_net_difference, nnz_column_removed, nnz_column_added) = subtract_multiple_of_row_from_other_row(
-                    &mut remaining_rows[i],
-                    &ratio,
-                    &current_row[1..],
-                );
+                let (nnz_row_net_difference, nnz_column_removed, nnz_column_added) =
+                    subtract_multiple_of_row_from_other_row(
+                        &mut remaining_rows[i],
+                        &ratio,
+                        &current_row[1..],
+                    );
 
                 nnz_row[k + 1 + i] -= nnz_row_net_difference.0;
                 nnz_row[k + 1 + i] += nnz_row_net_difference.1;
@@ -100,7 +106,8 @@ where
 
             debug_assert_eq!(nnz_row[k], 0);
             debug_assert_eq!(nnz_column[k], 0);
-            debug_assert!(nnz_row[(k + 1)..].iter()
+            debug_assert!(nnz_row[(k + 1)..]
+                .iter()
                 .enumerate()
                 .all(|(i, count)| rows[k + 1 + i].len() == *count));
         }
@@ -113,9 +120,12 @@ where
             }
         }
         let mut lower_triangular = vec![Vec::new(); m - 1];
-        for (i, row) in lower_triangular_row_major.into_iter().enumerate()
+        for (i, row) in lower_triangular_row_major
+            .into_iter()
+            .enumerate()
             // We collected starting at row 1, but the lowest row index was 1.
-            .map(|(i, v)| (i + 1, v)) {
+            .map(|(i, v)| (i + 1, v))
+        {
             for (j, v) in row {
                 lower_triangular[j].push((i, v));
             }
@@ -126,7 +136,6 @@ where
         row_permutation.invert();
         let mut column_permutation = FullPermutation::new(column_permutation);
         column_permutation.invert();
-
 
         Self {
             row_permutation,
@@ -144,8 +153,8 @@ fn subtract_multiple_of_row_from_other_row<T>(
     being_removed: &[(usize, T)],
 ) -> ((usize, usize), Vec<usize>, Vec<usize>)
 where
-    for<'r> T: Mul<&'r T, Output=T> + Sub<T, Output=T> + Zero + Eq,
-    for<'r> &'r T: Neg<Output=T> + Mul<&'r T, Output=T>,
+    for<'r> T: Mul<&'r T, Output = T> + Sub<T, Output = T> + Zero + Eq,
+    for<'r> &'r T: Neg<Output = T> + Mul<&'r T, Output = T>,
 {
     debug_assert!(!ratio.is_zero());
 
@@ -200,7 +209,11 @@ where
             Ordering::Greater => (0, new_row_nnz - old_row_nnz),
         };
 
-        ((row_nnz_net_removed, row_nnz_net_added), column_nnz_removed, column_nnz_added)
+        (
+            (row_nnz_net_removed, row_nnz_net_added),
+            column_nnz_removed,
+            column_nnz_added,
+        )
     }
 }
 
@@ -217,10 +230,13 @@ where
 /// matrix.
 /// * `nnz_row`: Number of nonzero elements per row.
 fn swap<T>(
-    pivot_row: usize, pivot_column: usize,
+    pivot_row: usize,
+    pivot_column: usize,
     k: usize,
-    row_permutation: &mut [usize], column_permutation: &mut [usize],
-    nnz_row: &mut [usize], nnz_column: &mut [usize],
+    row_permutation: &mut [usize],
+    column_permutation: &mut [usize],
+    nnz_row: &mut [usize],
+    nnz_column: &mut [usize],
     rows: &mut [Vec<(usize, T)>],
     lower_triangular_row_major: &mut [Vec<(usize, T)>],
 ) {
@@ -275,9 +291,7 @@ fn count_nonzeros<T>(rows: &[Vec<(usize, T)>]) -> (Vec<usize>, Vec<usize>) {
     debug_assert!(n > 0);
     debug_assert!(rows.iter().all(|row| row.iter().all(|&(i, _)| i < n)));
 
-    let nnz_row = rows.iter()
-        .map(Vec::len)
-        .collect::<Vec<_>>();
+    let nnz_row = rows.iter().map(Vec::len).collect::<Vec<_>>();
 
     let nnz_column = {
         let mut counts = vec![0; n];
@@ -304,8 +318,8 @@ mod test {
 
     use crate::algorithm::two_phase::matrix_provider::column::identity::{IdentityColumnStruct, One};
     use crate::algorithm::two_phase::tableau::inverse_maintenance::carry::BasisInverse;
-    use crate::algorithm::two_phase::tableau::inverse_maintenance::carry::lower_upper::LUDecomposition;
-    use crate::algorithm::two_phase::tableau::inverse_maintenance::carry::lower_upper::permutation::FullPermutation;
+    use crate::algorithm::two_phase::tableau::inverse_maintenance::carry::lower_upper_forest_tomlin::LUDecomposition;
+    use crate::algorithm::two_phase::tableau::inverse_maintenance::carry::lower_upper_forest_tomlin::permutation::FullPermutation;
     use crate::algorithm::two_phase::tableau::inverse_maintenance::ColumnComputationInfo;
     use crate::data::linear_algebra::vector::{SparseVector, Vector};
     use crate::data::number_types::rational::RationalBig;
@@ -388,7 +402,10 @@ mod test {
 
     #[test]
     fn wikipedia_example() {
-        let columns = vec![vec![(0, RB!(4)), (1, RB!(3))], vec![(0, RB!(6)), (1, RB!(3))]];
+        let columns = vec![
+            vec![(0, RB!(4)), (1, RB!(3))],
+            vec![(0, RB!(6)), (1, RB!(3))],
+        ];
         let result = LUDecomposition::rows(columns);
         let expected = LUDecomposition {
             row_permutation: FullPermutation::identity(2),
@@ -403,7 +420,10 @@ mod test {
 
     #[test]
     fn wikipedia_example2() {
-        let rows = vec![vec![(0, RB!(-1)), (1, RB!(3, 2))], vec![(0, RB!(1)), (1, RB!(-1))]];
+        let rows = vec![
+            vec![(0, RB!(-1)), (1, RB!(3, 2))],
+            vec![(0, RB!(1)), (1, RB!(-1))],
+        ];
         let result = LUDecomposition::rows(rows);
         let expected = LUDecomposition {
             row_permutation: FullPermutation::identity(2),
@@ -416,11 +436,15 @@ mod test {
         assert_eq!(result, expected);
 
         assert_eq!(
-            expected.generate_column(IdentityColumnStruct((0, One))).into_column(),
+            expected
+                .generate_column(IdentityColumnStruct((0, One)))
+                .into_column(),
             SparseVector::new(vec![(0, RB!(2)), (1, RB!(2))], 2),
         );
         assert_eq!(
-            expected.generate_column(IdentityColumnStruct((1, One))).into_column(),
+            expected
+                .generate_column(IdentityColumnStruct((1, One)))
+                .into_column(),
             SparseVector::new(vec![(0, RB!(3)), (1, RB!(2))], 2),
         );
     }
@@ -428,7 +452,7 @@ mod test {
     mod subtract_multiple_of_column_from_other_column {
         use num::FromPrimitive;
 
-        use crate::algorithm::two_phase::tableau::inverse_maintenance::carry::lower_upper::decomposition::subtract_multiple_of_row_from_other_row;
+        use crate::algorithm::two_phase::tableau::inverse_maintenance::carry::lower_upper_forest_tomlin::decomposition::subtract_multiple_of_row_from_other_row;
         use crate::data::number_types::rational::Rational32;
         use crate::R32;
 

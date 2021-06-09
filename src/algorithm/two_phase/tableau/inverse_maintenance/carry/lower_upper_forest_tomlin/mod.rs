@@ -11,8 +11,8 @@ use std::time::{Duration, SystemTime};
 use num::Zero;
 
 use crate::algorithm::two_phase::matrix_provider::column::{Column, OrderedColumn};
-use crate::algorithm::two_phase::tableau::inverse_maintenance::carry::lower_upper::eta_file::EtaFile;
-use crate::algorithm::two_phase::tableau::inverse_maintenance::carry::lower_upper::permutation::{
+use crate::algorithm::two_phase::tableau::inverse_maintenance::carry::lower_upper_forest_tomlin::eta_file::EtaFile;
+use crate::algorithm::two_phase::tableau::inverse_maintenance::carry::lower_upper_forest_tomlin::permutation::{
     FullPermutation, Permutation, RotateToBackPermutation,
 };
 use crate::algorithm::two_phase::tableau::inverse_maintenance::carry::BasisInverse;
@@ -508,9 +508,9 @@ mod test {
     use crate::algorithm::two_phase::matrix_provider::matrix_data;
     use crate::algorithm::two_phase::matrix_provider::matrix_data::Column;
     use crate::algorithm::two_phase::tableau::inverse_maintenance::carry::BasisInverse;
-    use crate::algorithm::two_phase::tableau::inverse_maintenance::carry::lower_upper::ColumnAndSpike;
-    use crate::algorithm::two_phase::tableau::inverse_maintenance::carry::lower_upper::LUDecomposition;
-    use crate::algorithm::two_phase::tableau::inverse_maintenance::carry::lower_upper::permutation::FullPermutation;
+    use crate::algorithm::two_phase::tableau::inverse_maintenance::carry::lower_upper_forest_tomlin::ColumnAndSpike;
+    use crate::algorithm::two_phase::tableau::inverse_maintenance::carry::lower_upper_forest_tomlin::LUDecomposition;
+    use crate::algorithm::two_phase::tableau::inverse_maintenance::carry::lower_upper_forest_tomlin::permutation::FullPermutation;
     use crate::algorithm::two_phase::tableau::inverse_maintenance::ColumnComputationInfo;
     use crate::data::linear_algebra::vector::{SparseVector, Vector};
     use crate::data::number_types::rational::{Rational64, RationalBig};
@@ -636,8 +636,8 @@ mod test {
     }
 
     mod change_basis {
-        use crate::algorithm::two_phase::tableau::inverse_maintenance::carry::lower_upper::eta_file::EtaFile;
-        use crate::algorithm::two_phase::tableau::inverse_maintenance::carry::lower_upper::permutation::RotateToBackPermutation;
+        use crate::algorithm::two_phase::tableau::inverse_maintenance::carry::lower_upper_forest_tomlin::eta_file::EtaFile;
+        use crate::algorithm::two_phase::tableau::inverse_maintenance::carry::lower_upper_forest_tomlin::permutation::RotateToBackPermutation;
 
         use super::*;
 

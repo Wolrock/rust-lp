@@ -4,7 +4,7 @@
 use std::cmp::Ordering;
 use std::fmt;
 
-use crate::algorithm::two_phase::tableau::inverse_maintenance::carry::lower_upper::permutation::Permutation;
+use crate::algorithm::two_phase::tableau::inverse_maintenance::carry::lower_upper_forest_tomlin::permutation::Permutation;
 
 /// Rotate a part of the range.
 ///
@@ -125,8 +125,8 @@ impl fmt::Display for RotateToBack {
 
 #[cfg(test)]
 mod test {
-    use crate::algorithm::two_phase::tableau::inverse_maintenance::carry::lower_upper::permutation::Permutation;
-    use crate::algorithm::two_phase::tableau::inverse_maintenance::carry::lower_upper::permutation::rotate_to_back::RotateToBack;
+    use crate::algorithm::two_phase::tableau::inverse_maintenance::carry::lower_upper_forest_tomlin::permutation::Permutation;
+    use crate::algorithm::two_phase::tableau::inverse_maintenance::carry::lower_upper_forest_tomlin::permutation::rotate_to_back::RotateToBack;
 
     #[test]
     fn no_change() {

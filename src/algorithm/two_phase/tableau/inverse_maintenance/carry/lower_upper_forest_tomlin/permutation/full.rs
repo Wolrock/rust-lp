@@ -4,7 +4,7 @@
 /// produced by the pivoting during the decomposition.
 use std::{fmt, mem};
 
-use crate::algorithm::two_phase::tableau::inverse_maintenance::carry::lower_upper::permutation::Permutation;
+use crate::algorithm::two_phase::tableau::inverse_maintenance::carry::lower_upper_forest_tomlin::permutation::Permutation;
 
 /// Full permutation.
 ///
@@ -22,17 +22,15 @@ impl Full {
     ///
     /// Computes the inverse by sorting.
     pub fn new(forward: Vec<usize>) -> Self {
-        let mut backward = forward.iter()
+        let mut backward = forward
+            .iter()
             .enumerate()
             .map(|(i, j)| (*j, i))
             .collect::<Vec<_>>();
         backward.sort_unstable_by_key(|&(j, _)| j);
         let backward = backward.into_iter().map(|(_, i)| i).collect();
 
-        Self {
-            forward,
-            backward,
-        }
+        Self { forward, backward }
     }
 
     /// Create a new instance that maps an index onto itself.
@@ -42,7 +40,7 @@ impl Full {
     /// * `n`: Number of elements in the permutation. Sometimes, this variable is saved as a field
     /// for debug assertions only, while sometimes, it is also necessary to determine the
     /// permutation.
-    pub fn identity(n: usize) -> Self{
+    pub fn identity(n: usize) -> Self {
         Self {
             forward: (0..n).collect(),
             backward: (0..n).collect(),
@@ -91,7 +89,7 @@ impl fmt::Display for Full {
 
 #[cfg(test)]
 mod test {
-    use crate::algorithm::two_phase::tableau::inverse_maintenance::carry::lower_upper::permutation::{FullPermutation, Permutation};
+    use crate::algorithm::two_phase::tableau::inverse_maintenance::carry::lower_upper_forest_tomlin::permutation::{FullPermutation, Permutation};
 
     #[test]
     fn identity() {

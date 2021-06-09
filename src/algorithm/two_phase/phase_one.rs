@@ -132,6 +132,7 @@ where
 {
     let mut rule = PR::new();
     loop {
+        println!("{}", tableau);
         debug_assert!(is_in_basic_feasible_solution_state(&tableau));
 
         match rule.select_primal_pivot_column(&tableau) {

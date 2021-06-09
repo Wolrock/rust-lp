@@ -1,7 +1,7 @@
 //! # Identity
 //!
 //! A permutation that doesn't change anything. Not in use.
-use crate::algorithm::two_phase::tableau::inverse_maintenance::carry::lower_upper::permutation::Permutation;
+use crate::algorithm::two_phase::tableau::inverse_maintenance::carry::lower_upper_forest_tomlin::permutation::Permutation;
 
 /// Permutation that maps every element onto itself.
 ///

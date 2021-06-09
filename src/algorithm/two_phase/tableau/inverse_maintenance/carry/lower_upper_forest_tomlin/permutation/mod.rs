@@ -8,7 +8,6 @@ pub use swap::Swap as SwapPermutation;
 
 mod full;
 mod identity;
-mod rotate;
 mod rotate_to_back;
 mod swap;
 

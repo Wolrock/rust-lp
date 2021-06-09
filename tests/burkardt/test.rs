@@ -41,7 +41,7 @@ fn adlittle() {
 
     let mut general = result.try_into().unwrap();
     let data = general.derive_matrix_data().unwrap();
-    let result = data.solve_relaxation::<Carry<S, BasisInverseRows<_>>>();
+    let result = data.solve_relaxation::<Carry<S, LURF<_>>>();
 
     match result {
         OptimizationResult::FiniteOptimum(vector) => {
