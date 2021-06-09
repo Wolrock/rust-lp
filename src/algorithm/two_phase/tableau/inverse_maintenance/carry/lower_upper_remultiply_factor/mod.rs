@@ -235,18 +235,17 @@ where
 
         // goal: y = B^{-1} c
 
-        let mut rhs = original_column.clone();
-
         // apply P and Q permutations of initial LU to rhs
-        rhs = rhs
+        let rhs = original_column
             .iter()
             .map(|(mut i, v)| {
                 self.row_permutation.forward(&mut i);
                 (i, v.into())
             })
+            // Also sorts after the row permutation
             .collect::<BTreeMap<_, _>>();
 
-        self.column_permutation.forward_sorted(&rhs);
+        self.column_permutation.forward_sorted(rhs);
 
         // apply updates to rhs
         for (p, q) in self.updates.iter().rev() {
@@ -259,7 +258,7 @@ where
                 })
                 .collect::<BTreeMap<_, _>>();
             // apply last inverse column permutation of updates vector
-            q.backward_unsorted(&rhs)
+            q.backward_unsorted(rhs)
         }
 
         // Compute L^-1 c
