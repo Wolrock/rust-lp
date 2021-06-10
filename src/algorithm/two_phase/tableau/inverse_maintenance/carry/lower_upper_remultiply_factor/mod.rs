@@ -20,6 +20,9 @@ use crate::data::linear_algebra::traits::SparseElement;
 use crate::data::linear_algebra::vector::{SparseVector, Vector};
 
 use crate::RB;
+use std::array::IntoIter;
+use std::borrow::Borrow;
+use std::iter::FromIterator;
 
 mod decomposition;
 mod permutation;
@@ -135,17 +138,25 @@ where
         let active_block_product = multiply_matrices(&l_22, &u_22);
 
         // Bring product into row major for LU decomposition
-        let active_block_product_T = (active_block_product.0, vec![vec![]; active_block_product.0]);
+        let mut active_block_product_T =
+            (active_block_product.0, vec![vec![]; active_block_product.0]);
         for j in 0..active_block_product.0 {
-            for (i, x) in active_block_product.1[j] {
-                active_block_product_T[i].push((j, x));
+            for (i, x) in &active_block_product.1[j] {
+                // TODO(Debug): This might be wrong
+                active_block_product_T.1[*i].push((j, x.clone()));
             }
         }
 
         // Compute LU of active block
-        let mut active_block_lu = LUDecomposition::rows(active_block_product_T.1);
-        let mut l_bar = (active_block_product.0, &active_block_lu.lower_triangular);
-        let mut u_bar = (active_block_product.0, &active_block_lu.upper_triangular);
+        let mut active_block_lu = LUDecomposition::<F>::rows(active_block_product_T.1);
+        let mut l_bar = (
+            active_block_product.0,
+            active_block_lu.lower_triangular.clone(),
+        );
+        let mut u_bar = (
+            active_block_product.0,
+            active_block_lu.upper_triangular.clone(),
+        );
         let mut p_bar = generate_permutation_matrix(&active_block_lu.row_permutation);
         let mut q_bar = generate_permutation_matrix(&active_block_lu.column_permutation);
 
@@ -153,29 +164,32 @@ where
         &active_block_lu.column_permutation.invert();
         &active_block_lu.row_permutation.invert();
 
-        let identity_lu = LUDecomposition::identity(active_block_product.0);
+        let identity_lu = LUDecomposition::<F>::identity(active_block_product.0);
         let mut l_bar_inv = Vec::new();
         let mut l_22_inv = Vec::new();
 
         for i in 0..active_block_product.0 {
-            l_bar_inv.push(
-                active_block_lu
-                    .invert_lower_right(identity_lu.upper_triangular[i].iter().collect()),
-            );
+            let unit_column = BTreeMap::from_iter(IntoIter::new([(
+                identity_lu.upper_triangular[i][0].0,
+                identity_lu.upper_triangular[i][0].1.clone(),
+            )]));
+
+            l_bar_inv.push(active_block_lu.invert_lower_right(unit_column));
         }
         let l_bar_inv = (active_block_product.0, l_bar_inv);
 
-        active_block_lu.lower_triangular = l_22.1;
+        active_block_lu.lower_triangular = l_22.1.clone();
         for i in 0..active_block_product.0 {
-            l_22_inv.push(
-                active_block_lu
-                    .invert_lower_right(identity_lu.upper_triangular[i].iter().collect()),
-            );
+            let unit_column = BTreeMap::from_iter(IntoIter::new([(
+                identity_lu.upper_triangular[i][0].0,
+                identity_lu.upper_triangular[i][0].1.clone(),
+            )]));
+            l_22_inv.push(active_block_lu.invert_lower_right(unit_column));
         }
-        let l_22_inv = (active_block_product.0, l_bar_inv);
+        let l_22_inv = (active_block_product.0, l_22_inv);
 
-        let p_bar_inv = generate_permutation_matrix(&active_block_lu.row_permutation);
-        let q_bar_inv = generate_permutation_matrix(&active_block_lu.column_permutation);
+        let p_bar_inv = generate_permutation_matrix::<F>(&active_block_lu.row_permutation);
+        let q_bar_inv = generate_permutation_matrix::<F>(&active_block_lu.column_permutation);
 
         // Compute new entries for L matrix
         l_21 = multiply_matrices(&p_bar_inv, &l_21);
@@ -205,7 +219,7 @@ where
             (0..l.len())
                 .map(|j| {
                     if j >= active_block_column && j <= active_block_row {
-                        p_bar[j - active_block_column][0].0
+                        p_bar.1[j - active_block_column][0].0
                     } else {
                         1
                     }
@@ -216,7 +230,7 @@ where
             (0..l.len())
                 .map(|j| {
                     if j >= active_block_column && j <= active_block_row {
-                        q_bar[j - active_block_column][0].0
+                        q_bar.1[j - active_block_column][0].0
                     } else {
                         1
                     }
@@ -224,7 +238,7 @@ where
                 .collect(),
         );
 
-        self.updates.add((row_update, column_update));
+        self.updates.push((row_update, column_update));
     }
 
     fn generate_column<C: Column>(&self, original_column: C) -> Self::ColumnComputationInfo
@@ -245,7 +259,8 @@ where
             // Also sorts after the row permutation
             .collect::<BTreeMap<_, _>>();
 
-        self.column_permutation.forward_sorted(rhs);
+        let mut rhs: Vec<(usize, F)> = Vec::from_iter(rhs.into_iter());
+        self.column_permutation.forward_sorted(&mut rhs[..]);
 
         // apply updates to rhs
         for (p, q) in self.updates.iter().rev() {
@@ -254,13 +269,14 @@ where
                 .iter()
                 .map(|(mut i, v)| {
                     p.backward(&mut i);
-                    (i, v.into())
+                    (i, v.clone())
                 })
-                .collect::<BTreeMap<_, _>>();
+                .collect();
             // apply last inverse column permutation of updates vector
-            q.backward_unsorted(rhs)
+            q.backward_unsorted(&mut rhs[..])
         }
 
+        let rhs = BTreeMap::from_iter(rhs.into_iter());
         // Compute L^-1 c
         let mut w = self.invert_lower_right(rhs);
 
@@ -307,7 +323,6 @@ where
 
         for (eta, q) in self.updates.iter().rev() {
             q.backward_sorted(&mut w);
-            eta.apply_left(&mut w);
         }
 
         let mut tuples = self.invert_lower_left(w.into_iter().collect());
@@ -453,27 +468,38 @@ where
     }
 }
 
-fn generate_permutation_matrix<F>(p: &FullPermutation) -> (usize, Vec<Vec<(usize, F)>>) {
+fn generate_permutation_matrix<F: num::One>(p: &FullPermutation) -> (usize, Vec<Vec<(usize, F)>>) {
     // TODO: Replace 1. with number type of 1
     (
         p.len(),
-        (0..p.len()).map(|&j| vec![(p.forward(j), 1.)]).collect(),
+        (0..p.len())
+            .map(|mut j| {
+                p.forward(&mut j);
+                vec![(j, F::one())]
+            })
+            .collect(),
     )
 }
 
-fn multiply_matrices<F: Copy>(
+fn multiply_matrices<F: Clone + ops::Internal + ops::InternalHR>(
     a: &(usize, Vec<Vec<(usize, F)>>),
     b: &(usize, Vec<Vec<(usize, F)>>),
 ) -> (usize, Vec<Vec<(usize, F)>>) {
     assert_eq!(a.1.len(), b.0);
     let a_size = (a.0, a.1.len());
     let b_size = (b.0, b.1.len());
-    let mut product: Vec<Vec<(usize, F)>> = vec![Vec::new(); b_size.1];
+    // TODO(Debug): might need fix in b_size.1
+    let mut product = vec![vec![]; b_size.1];
     for column in 0..b_size.1 {
         let mut column_product: Vec<Vec<(usize, F)>> = Vec::new();
         let mut row_indices: Vec<usize> = vec![];
         for (row, val) in &b.1[column] {
-            column_product.push(a.1[*row].iter().map(|&(i, x)| (i, x * val)).collect());
+            column_product.push(
+                a.1[*row]
+                    .iter()
+                    .map(|(i, x)| (*i, x.clone() * val.clone()))
+                    .collect(),
+            );
             let mut temp: Vec<usize> = column_product
                 .last()
                 .unwrap()
@@ -484,7 +510,7 @@ fn multiply_matrices<F: Copy>(
             row_indices.append(&mut temp);
         }
         for row in row_indices {
-            let mut row_sum = 0.;
+            let mut row_sum = F::zero();
             let column_indices = (0..column_product.len()).filter_map(|j| {
                 column_product[j]
                     .binary_search_by_key(&row, |&(i, _)| i)
@@ -492,9 +518,10 @@ fn multiply_matrices<F: Copy>(
                     .map(|i| (i, j))
             });
             for (i, j) in column_indices {
-                row_sum += column_product[j][i].1;
+                // TODO(Debug): Might need fix
+                row_sum += column_product[j][i].1.clone();
             }
-            if row_sum != 0. {
+            if row_sum != F::zero() {
                 product[column].push((row, row_sum));
             }
         }
@@ -502,7 +529,7 @@ fn multiply_matrices<F: Copy>(
     (a_size.0, product)
 }
 
-fn get_block<F>(
+fn get_block<F: Clone>(
     m: &Vec<Vec<(usize, F)>>,
     row: usize,    // Row of block in block representation of matrix M (exclusive)
     column: usize, // Column of block in block representation of matrix M (exclusive)
@@ -530,7 +557,7 @@ fn get_block<F>(
             .map(|vec| {
                 vec.iter()
                     .filter(|&(i, _)| r1 <= *i && *i < r2)
-                    .map(|&(i, x)| (i - r1, x))
+                    .map(|(i, x)| (*i - r1, x.clone()))
                     .collect()
             })
             .collect(),
@@ -540,7 +567,7 @@ fn get_block<F>(
 
 // Inserts block into matrix inplace
 // Assume block has exclusive column length in first arg of tuple
-fn insert_block<F: Copy>(
+fn insert_block<F: Clone>(
     m: &mut Vec<Vec<(usize, F)>>,          // Matrix M to insert into
     block: &(usize, Vec<Vec<(usize, F)>>), // Block to insert
     row: usize,                            // Row where the block begins in M (inclusive)
@@ -550,7 +577,12 @@ fn insert_block<F: Copy>(
     let aligned_block: (usize, Vec<Vec<(usize, F)>>) = (
         block.0,
         (0..block.1.len())
-            .map(|j| block.1[j].iter().map(|&(i, x)| (i + row, x)).collect())
+            .map(|j| {
+                block.1[j]
+                    .iter()
+                    .map(|(i, x)| (*i + row, x.clone()))
+                    .collect()
+            })
             .collect(),
     );
 
@@ -559,8 +591,8 @@ fn insert_block<F: Copy>(
         for i in 0..aligned_block.0 {
             let search = m[j].binary_search_by_key(&aligned_block.1[j - column][i].0, |&(i, _)| i);
             match search {
-                Ok(x) => m[j][x] = aligned_block.1[j - column][i],
-                Err(x) => m[j].insert(x, aligned_block.1[j - column][i]),
+                Ok(x) => m[j][x] = aligned_block.1[j - column][i].clone(),
+                Err(x) => m[j].insert(x, aligned_block.1[j - column][i].clone()),
             }
         }
     }
