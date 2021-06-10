@@ -78,6 +78,7 @@ where
 
     fn identity(m: usize) -> Self {
         Self {
+            // TODO: Change from lower triangular to unit lower triangular
             row_permutation: FullPermutation::identity(m),
             column_permutation: FullPermutation::identity(m),
             lower_triangular: vec![vec![]; m - 1],
@@ -105,13 +106,29 @@ where
     fn change_basis(&mut self, pivot_row_index: usize, column: Self::ColumnComputationInfo) {
         let m = self.m();
         // Index in entering column
-        let mut pivot_column_index = pivot_row_index;
+
+        let pivot_column_index = {
+            // Simplex iteration pivots on `pivot_row_index` p
+            // -> Replace column p of Basis by column a_q (column of pivot in row p) of A
+            // -> `pivot_column_index` represents this column
+            //
+            // Column with a pivot in `pivot_row_index` is leaving
+            let mut pivot_column_index = pivot_row_index;
+            // Compute and store the column permutations applied through Q
+            // -> Q places spike in column p in position m and moves other columns to the left
+            self.column_permutation.forward(&mut pivot_column_index);
+            for (_, q) in &self.updates {
+                Permutation::forward(q, &mut pivot_column_index);
+            }
+            pivot_column_index
+        };
+
         //********************************
         // Initial active block boundaries:
         //********************************
         // Assume index starting from 0 and being inclusive
 
-        let mut active_block_row = m;
+        let mut active_block_row = self.lower_triangular.len() - pivot_column_index;
         let mut active_block_column = pivot_column_index;
         let l = &mut self.lower_triangular;
         let u = &mut self.upper_triangular;
@@ -148,6 +165,7 @@ where
         }
 
         // Compute LU of active block
+        println!("");
         let mut active_block_lu = LUDecomposition::<F>::rows(active_block_product_T.1);
         let mut l_bar = (
             active_block_product.0,
