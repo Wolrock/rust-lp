@@ -117,8 +117,9 @@ where
             // Compute and store the column permutations applied through Q
             // -> Q places spike in column p in position m and moves other columns to the left
             self.column_permutation.forward(&mut pivot_column_index);
-            for (_, q) in &self.updates {
+            for (p, q) in &self.updates {
                 Permutation::forward(q, &mut pivot_column_index);
+                Permutation::forward(p, &mut pivot_column_index);
             }
             pivot_column_index
         };
@@ -127,11 +128,31 @@ where
         // Initial active block boundaries:
         //********************************
         // Assume index starting from 0 and being inclusive
+        let Self::ColumnComputationInfo {
+            column: _,
+            mut spike,
+        } = column;
 
-        let mut active_block_row = self.lower_triangular.len() - pivot_column_index;
+        self.upper_triangular[pivot_column_index] = spike;
+
+        let mut active_block_row = self.upper_triangular[pivot_column_index].last().unwrap().0;
         let mut active_block_column = pivot_column_index;
         let l = &mut self.lower_triangular;
         let u = &mut self.upper_triangular;
+        if active_block_column == active_block_row {
+            self.updates.push((
+                FullPermutation::identity(u.len()),
+                FullPermutation::identity(u.len()),
+            ));
+            return;
+        }
+        // Make L into square matrix
+        l.push(vec![]);
+
+        // lower triangular to unit lower triangular
+        for col in 0..l.len() {
+            l[col].insert(0, (col, F::one()));
+        }
 
         // Get blocks needed for update
         let mut u_12: (usize, Vec<Vec<(usize, F)>>) =
@@ -175,6 +196,15 @@ where
             active_block_product.0,
             active_block_lu.upper_triangular.clone(),
         );
+        // make l_bar square
+        l_bar.1.push(vec![]);
+
+        let mut id = vec![vec![]; active_block_product.0];
+        // l_bar to unit lower triangular
+        for col in 0..l_bar.1.len() {
+            l_bar.1[col].insert(0, (col, F::one()));
+            id[col].push((col, F::one()));
+        }
         let mut p_bar = generate_permutation_matrix(&active_block_lu.row_permutation);
         let mut q_bar = generate_permutation_matrix(&active_block_lu.column_permutation);
 
@@ -182,28 +212,37 @@ where
         &active_block_lu.column_permutation.invert();
         &active_block_lu.row_permutation.invert();
 
-        let identity_lu = LUDecomposition::<F>::identity(active_block_product.0);
         let mut l_bar_inv = Vec::new();
         let mut l_22_inv = Vec::new();
 
         for i in 0..active_block_product.0 {
-            let unit_column = BTreeMap::from_iter(IntoIter::new([(
-                identity_lu.upper_triangular[i][0].0,
-                identity_lu.upper_triangular[i][0].1.clone(),
-            )]));
+            let unit_column =
+                BTreeMap::from_iter(IntoIter::new([(id[i][0].0, id[i][0].1.clone())]));
 
             l_bar_inv.push(active_block_lu.invert_lower_right(unit_column));
         }
         let l_bar_inv = (active_block_product.0, l_bar_inv);
 
-        active_block_lu.lower_triangular = l_22.1.clone();
+        // TODO(Debug): might lead to errors since code assumes non unit triangular
+        active_block_lu
+            .lower_triangular
+            .clone_from_slice(&l_22.1[0..l_22.1.len() - 1]);
+
         for i in 0..active_block_product.0 {
-            let unit_column = BTreeMap::from_iter(IntoIter::new([(
-                identity_lu.upper_triangular[i][0].0,
-                identity_lu.upper_triangular[i][0].1.clone(),
-            )]));
+            let unit_column =
+                BTreeMap::from_iter(IntoIter::new([(id[i][0].0, id[i][0].1.clone())]));
+
             l_22_inv.push(active_block_lu.invert_lower_right(unit_column));
         }
+
+        // make l_22 inv square
+        l_22_inv.push(vec![]);
+
+        // Make l_22 inv unit triangular
+        for col in 0..l.len() {
+            l_22_inv[col].insert(0, (col, F::one()));
+        }
+
         let l_22_inv = (active_block_product.0, l_22_inv);
 
         let p_bar_inv = generate_permutation_matrix::<F>(&active_block_lu.row_permutation);
@@ -512,12 +551,7 @@ fn multiply_matrices<F: Clone + ops::Internal + ops::InternalHR>(
         let mut column_product: Vec<Vec<(usize, F)>> = Vec::new();
         let mut row_indices: Vec<usize> = vec![];
         for (row, val) in &b.1[column] {
-            column_product.push(
-                a.1[*row]
-                    .iter()
-                    .map(|(i, x)| (*i, x.clone() * val.clone()))
-                    .collect(),
-            );
+            column_product.push(a.1[*row].iter().map(|(i, x)| (*i, x * val)).collect());
             let mut temp: Vec<usize> = column_product
                 .last()
                 .unwrap()
@@ -537,7 +571,7 @@ fn multiply_matrices<F: Clone + ops::Internal + ops::InternalHR>(
             });
             for (i, j) in column_indices {
                 // TODO(Debug): Might need fix
-                row_sum += column_product[j][i].1.clone();
+                row_sum += &column_product[j][i].1;
             }
             if row_sum != F::zero() {
                 product[column].push((row, row_sum));
@@ -890,32 +924,32 @@ mod test {
             assert_eq!(modified, expected);
         }
     }
-    //
-    //         #[test]
-    //         fn from_identity_2() {
-    //             let mut identity = LUDecomposition::<RationalBig>::identity(2);
-    //
-    //             let spike = vec![(0, RB!(1)), (1, RB!(1))];
-    //             let column_computation_info = ColumnAndSpike {
-    //                 column: SparseVector::new(spike.clone(), 2),
-    //                 spike,
-    //             };
-    //             identity.change_basis(0, column_computation_info);
-    //             let modified = identity;
-    //
-    //             let expected = LUDecomposition {
-    //                 row_permutation: FullPermutation::identity(2),
-    //                 column_permutation: FullPermutation::identity(2),
-    //                 lower_triangular: vec![vec![]],
-    //                 upper_triangular: vec![vec![(0, RB!(1))], vec![(0, RB!(1)), (1, RB!(1))]],
-    //                 updates: vec![(
-    //                     EtaFile::new(vec![], 0, 2),
-    //                     RotateToBackPermutation::new(0, 2),
-    //                 )],
-    //             };
-    //             assert_eq!(modified, expected);
-    //         }
-    //
+
+    #[test]
+    fn from_identity_2() {
+        let mut identity = LUDecomposition::<RationalBig>::identity(2);
+
+        let spike = vec![(0, RB!(1)), (1, RB!(1))];
+        let column_computation_info = ColumnAndSpike {
+            column: SparseVector::new(spike.clone(), 2),
+            spike,
+        };
+        identity.change_basis(0, column_computation_info);
+        let modified = identity;
+
+        let expected = LUDecomposition {
+            row_permutation: FullPermutation::identity(2),
+            column_permutation: FullPermutation::identity(2),
+            lower_triangular: vec![vec![]],
+            upper_triangular: vec![vec![(0, RB!(1))], vec![(0, RB!(1)), (1, RB!(1))]],
+            updates: vec![(
+                FullPermutation::new(vec![1, 0]),
+                FullPermutation::new(vec![0, 1]),
+            )],
+        };
+        assert_eq!(modified, expected);
+    }
+
     //         /// Doesn't require any `r`, permutations only are sufficient
     //         #[test]
     //         fn from_5x5_identity_no_r() {
