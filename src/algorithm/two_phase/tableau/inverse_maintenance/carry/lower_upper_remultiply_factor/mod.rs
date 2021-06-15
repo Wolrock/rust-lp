@@ -223,23 +223,22 @@ where
         }
         let l_bar_inv = (active_block_product.0, l_bar_inv);
 
-        // TODO(Debug): might lead to errors since code assumes non unit triangular
-        active_block_lu
-            .lower_triangular
-            .clone_from_slice(&l_22.1[0..l_22.1.len() - 1]);
+        // remove unit diagonal and last column for inversion in LU decomposition
+        for col in 0..l_22.1.len() - 1 {
+            active_block_lu.lower_triangular[col] = l_22.1[col].clone();
+            active_block_lu.lower_triangular[col].remove(0);
+        }
 
-        for i in 0..active_block_product.0 {
-            let unit_column =
-                BTreeMap::from_iter(IntoIter::new([(id[i][0].0, id[i][0].1.clone())]));
+        for i in 0..active_block_product.0 - 1 {
+            let mut unit_column = BTreeMap::new();
+            unit_column.insert(i, F::one());
 
             l_22_inv.push(active_block_lu.invert_lower_right(unit_column));
         }
-
-        // make l_22 inv square
+        // make l_22 square
         l_22_inv.push(vec![]);
-
         // Make l_22 inv unit triangular
-        for col in 0..l.len() {
+        for col in 0..l_22.1.len() {
             l_22_inv[col].insert(0, (col, F::one()));
         }
 
@@ -265,20 +264,20 @@ where
         // Restore L and U to upper triangular
         // TODO(Debug): Check boundaries
         insert_block(l, &l_bar, active_block_column, active_block_column);
-        insert_block(l, &l_32, active_block_row, active_block_column);
+        insert_block(l, &l_32, active_block_row + 1, active_block_column);
         insert_block(l, &l_21, active_block_column, 0);
         insert_block(u, &u_12, 0, active_block_column);
         insert_block(u, &u_bar, active_block_column, active_block_column);
-        insert_block(u, &u_23, active_block_column, active_block_row);
+        insert_block(u, &u_23, active_block_column, active_block_row + 1);
 
         // TODO: Compute permutation updates
         let row_update = FullPermutation::new(
             (0..l.len())
                 .map(|j| {
                     if j >= active_block_column && j <= active_block_row {
-                        p_bar.1[j - active_block_column][0].0
+                        p_bar.1[j - active_block_column][0].0 + active_block_column
                     } else {
-                        1
+                        j
                     }
                 })
                 .collect(),
@@ -287,14 +286,21 @@ where
             (0..l.len())
                 .map(|j| {
                     if j >= active_block_column && j <= active_block_row {
-                        q_bar.1[j - active_block_column][0].0
+                        q_bar.1[j - active_block_column][0].0 + active_block_column
                     } else {
-                        1
+                        j
                     }
                 })
                 .collect(),
         );
-
+        // Restore l into non square and non unit lower
+        // TODO(Debug): might be problematic if L is not unit lower_triangular but only lower triangular
+        l.pop();
+        for i in (0..l.len()) {
+            if !l[i].is_empty() {
+                l[i].remove(0);
+            }
+        }
         self.updates.push((row_update, column_update));
     }
 
@@ -637,11 +643,17 @@ fn insert_block<F: Clone>(
             })
             .collect(),
     );
-
     // Update the row entries belonging to the block in M
     for j in (column..column + aligned_block.1.len()) {
-        for i in 0..aligned_block.0 {
-            let search = m[j].binary_search_by_key(&aligned_block.1[j - column][i].0, |&(i, _)| i);
+        // zero out existing entries
+        m[j] = m[j]
+            .iter()
+            .filter(|&(i, _)| *i < row || *i >= (row + aligned_block.0))
+            .cloned()
+            .collect();
+        for i in 0..aligned_block.1[j - column].len() {
+            let new_entry = &aligned_block.1[j - column][i].0;
+            let search = m[j].binary_search_by_key(new_entry, |&(i, _)| i);
             match search {
                 Ok(x) => m[j][x] = aligned_block.1[j - column][i].clone(),
                 Err(x) => m[j].insert(x, aligned_block.1[j - column][i].clone()),
@@ -940,307 +952,301 @@ mod test {
         let expected = LUDecomposition {
             row_permutation: FullPermutation::identity(2),
             column_permutation: FullPermutation::identity(2),
-            lower_triangular: vec![vec![]],
-            upper_triangular: vec![vec![(0, RB!(1))], vec![(0, RB!(1)), (1, RB!(1))]],
+            lower_triangular: vec![vec![(1, RB!(1))]],
+            upper_triangular: vec![vec![(0, RB!(1))], vec![(1, RB!(1))]],
             updates: vec![(
-                FullPermutation::new(vec![1, 0]),
+                FullPermutation::new(vec![0, 1]),
                 FullPermutation::new(vec![0, 1]),
             )],
         };
         assert_eq!(modified, expected);
     }
 
-    //         /// Doesn't require any `r`, permutations only are sufficient
-    //         #[test]
-    //         fn from_5x5_identity_no_r() {
-    //             let m = 5;
-    //             let mut initial = LUDecomposition::<RationalBig>::identity(5);
-    //
-    //             let spike = vec![(0, RB!(2)), (1, RB!(3)), (2, RB!(5)), (3, RB!(7))];
-    //             let column_computation_info = ColumnAndSpike {
-    //                 column: SparseVector::new(spike.clone(), m),
-    //                 spike,
-    //             };
-    //             initial.change_basis(1, column_computation_info);
-    //             let modified = initial;
-    //
-    //             let expected = LUDecomposition {
-    //                 row_permutation: FullPermutation::identity(m),
-    //                 column_permutation: FullPermutation::identity(m),
-    //                 lower_triangular: vec![vec![]; m - 1],
-    //                 upper_triangular: vec![
-    //                     vec![(0, RB!(1))],
-    //                     vec![(1, RB!(1))],
-    //                     vec![(2, RB!(1))],
-    //                     vec![(3, RB!(1))],
-    //                     vec![(0, RB!(2)), (1, RB!(5)), (2, RB!(7)), (4, RB!(3))],
+    /// Doesn't require any `r`, permutations only are sufficient
+    #[test]
+    fn from_5x5_identity_no_r() {
+        let m = 5;
+        let mut initial = LUDecomposition::<RationalBig>::identity(5);
+
+        let spike = vec![(0, RB!(2)), (1, RB!(3)), (2, RB!(5)), (3, RB!(7))];
+        let column_computation_info = ColumnAndSpike {
+            column: SparseVector::new(spike.clone(), m),
+            spike,
+        };
+        initial.change_basis(1, column_computation_info);
+        let modified = initial;
+
+        let expected = LUDecomposition {
+            row_permutation: FullPermutation::identity(m),
+            column_permutation: FullPermutation::identity(m),
+            lower_triangular: vec![vec![], vec![(2, RB!(5, 3)), (3, RB!(7, 3))], vec![], vec![]],
+            upper_triangular: vec![
+                vec![(0, RB!(1))],
+                vec![(0, RB!(2)), (1, RB!(3))],
+                vec![(2, RB!(1))],
+                vec![(3, RB!(1))],
+                vec![(4, RB!(1))],
+            ],
+            updates: vec![(FullPermutation::identity(m), FullPermutation::identity(m))],
+        };
+        assert_eq!(modified, expected);
+    }
+
+    /// Does require an `r`, permutations are not sufficient.
+    #[test]
+    fn from_4x4_identity() {
+        let m = 4;
+        let mut initial = LUDecomposition {
+            row_permutation: FullPermutation::identity(m),
+            column_permutation: FullPermutation::identity(m),
+            lower_triangular: vec![vec![]; m - 1],
+            upper_triangular: vec![
+                vec![(0, RB!(1))],
+                vec![(1, RB!(1))],
+                vec![(2, RB!(4))],
+                vec![(1, RB!(5)), (3, RB!(6))],
+            ],
+            updates: vec![],
+        };
+
+        let spike = vec![(1, RB!(2)), (2, RB!(3)), (3, RB!(4))];
+        let column_computation_info = ColumnAndSpike {
+            // They are the same in this case, row permutation and lower are identity
+            column: SparseVector::new(spike.clone(), m),
+            spike,
+        };
+        initial.change_basis(1, column_computation_info);
+        let modified = initial;
+
+        let expected = LUDecomposition {
+            row_permutation: FullPermutation::identity(m),
+            column_permutation: FullPermutation::identity(m),
+            lower_triangular: vec![vec![]; m - 1],
+            upper_triangular: vec![
+                vec![(0, RB!(1))],
+                vec![(1, RB!(4))],
+                vec![(2, RB!(6))],
+                vec![(1, RB!(3)), (2, RB!(4)), (3, -RB!(8, 6))],
+            ],
+            updates: vec![(FullPermutation::identity(m), FullPermutation::identity(m))],
+        };
+        assert_eq!(modified, expected);
+
+        // Columns
+        assert_eq!(
+            modified
+                .generate_column(IdentityColumnStruct((0, One)))
+                .into_column(),
+            SparseVector::standard_basis_vector(0, m),
+        );
+        assert_eq!(
+            modified
+                .generate_column(IdentityColumnStruct((1, One)))
+                .into_column(),
+            SparseVector::new(vec![(1, RB!(-3, 4)), (2, RB!(9, 16)), (3, RB!(1, 2))], m),
+        );
+        assert_eq!(
+            modified
+                .generate_column(IdentityColumnStruct((2, One)))
+                .into_column(),
+            SparseVector::new(vec![(2, RB!(1, 4))], m),
+        );
+        assert_eq!(
+            modified
+                .generate_column(IdentityColumnStruct((3, One)))
+                .into_column(),
+            SparseVector::new(vec![(1, RB!(5, 8)), (2, RB!(-15, 32)), (3, RB!(-1, 4))], m),
+        );
+
+        // Rows
+        assert_eq!(
+            modified.basis_inverse_row(0),
+            SparseVector::standard_basis_vector(0, m),
+        );
+        assert_eq!(
+            modified.basis_inverse_row(1),
+            SparseVector::new(vec![(1, RB!(-3, 4)), (3, RB!(5, 8))], m),
+        );
+        assert_eq!(
+            modified.basis_inverse_row(2),
+            SparseVector::new(vec![(1, RB!(9, 16)), (2, RB!(1, 4)), (3, RB!(-15, 32))], m),
+        );
+        assert_eq!(
+            modified.basis_inverse_row(3),
+            SparseVector::new(vec![(1, RB!(1, 2)), (3, RB!(-1, 4))], m),
+        );
+    }
+
+    //     ///From "A review of the LU update in the simplex algorithm" by Joseph M. Elble and
+    //     ///Nikolaes V. Sahinidis, Int. J. Mathematics in Operational Research, Vol. 4, No. 4, 2012.
+    //     #[test]
+    //     fn from_5x5_identity() {
+    //         let m = 5;
+    //         let mut initial = LUDecomposition {
+    //             row_permutation: FullPermutation::identity(m),
+    //             column_permutation: FullPermutation::identity(m),
+    //             lower_triangular: vec![vec![]; m - 1],
+    //             upper_triangular: vec![
+    //                 vec![(0, RB!(11))],
+    //                 vec![(0, RB!(12)), (1, RB!(22))],
+    //                 vec![(0, RB!(13)), (1, RB!(23)), (2, RB!(33))],
+    //                 vec![(0, RB!(14)), (1, RB!(24)), (2, RB!(34)), (3, RB!(44))],
+    //                 vec![
+    //                     (0, RB!(15)),
+    //                     (1, RB!(25)),
+    //                     (2, RB!(35)),
+    //                     (3, RB!(45)),
+    //                     (4, RB!(55)),
     //                 ],
-    //                 updates: vec![(
-    //                     EtaFile::new(vec![], 1, m),
-    //                     RotateToBackPermutation::new(1, m),
-    //                 )],
-    //             };
-    //             assert_eq!(modified, expected);
-    //         }
+    //             ],
+    //             updates: vec![],
+    //         };
     //
-    //         /// Does require an `r`, permutations are not sufficient.
-    //         #[test]
-    //         fn from_4x4_identity() {
-    //             let m = 4;
-    //             let mut initial = LUDecomposition {
-    //                 row_permutation: FullPermutation::identity(m),
-    //                 column_permutation: FullPermutation::identity(m),
-    //                 lower_triangular: vec![vec![]; m - 1],
-    //                 upper_triangular: vec![
-    //                     vec![(0, RB!(1))],
-    //                     vec![(1, RB!(1))],
-    //                     vec![(2, RB!(4))],
-    //                     vec![(1, RB!(5)), (3, RB!(6))],
+    //         let spike = vec![(0, RB!(12)), (1, RB!(22)), (2, RB!(32)), (3, RB!(42))];
+    //         let column_computation_info = ColumnAndSpike {
+    //             column: SparseVector::new(spike.clone(), m),
+    //             spike,
+    //         };
+    //         initial.change_basis(1, column_computation_info);
+    //         let modified = initial;
+    //
+    //         let expected = LUDecomposition {
+    //             row_permutation: FullPermutation::identity(m),
+    //             column_permutation: FullPermutation::identity(m),
+    //             lower_triangular: vec![vec![]; m - 1],
+    //             upper_triangular: vec![
+    //                 vec![(0, RB!(11))],
+    //                 vec![(0, RB!(13)), (1, RB!(33))],
+    //                 vec![(0, RB!(14)), (1, RB!(34)), (2, RB!(44))],
+    //                 vec![(0, RB!(15)), (1, RB!(35)), (2, RB!(45)), (3, RB!(55))],
+    //                 vec![
+    //                     (0, RB!(12)),
+    //                     (1, RB!(32)),
+    //                     (2, RB!(42)),
+    //                     (4, RB!(-215, 363)),
     //                 ],
-    //                 updates: vec![],
-    //             };
+    //             ],
+    //             updates: vec![(
+    //                 EtaFile::new(
+    //                     vec![
+    //                         (2, RB!(23, 33)),
+    //                         (3, RB!(24 * 33 - 34 * 23, 33 * 44)),
+    //                         (4, RB!(43, 7986)),
+    //                     ],
+    //                     1,
+    //                     m,
+    //                 ),
+    //                 RotateToBackPermutation::new(1, m),
+    //             )],
+    //         };
+    //         assert_eq!(modified, expected);
     //
-    //             let spike = vec![(1, RB!(2)), (2, RB!(3)), (3, RB!(4))];
-    //             let column_computation_info = ColumnAndSpike {
-    //                 // They are the same in this case, row permutation and lower are identity
-    //                 column: SparseVector::new(spike.clone(), m),
-    //                 spike,
-    //             };
-    //             initial.change_basis(1, column_computation_info);
-    //             let modified = initial;
-    //
-    //             let expected = LUDecomposition {
-    //                 row_permutation: FullPermutation::identity(m),
-    //                 column_permutation: FullPermutation::identity(m),
-    //                 lower_triangular: vec![vec![]; m - 1],
-    //                 upper_triangular: vec![
-    //                     vec![(0, RB!(1))],
-    //                     vec![(1, RB!(4))],
-    //                     vec![(2, RB!(6))],
-    //                     vec![(1, RB!(3)), (2, RB!(4)), (3, -RB!(8, 6))],
+    //         // Columns
+    //         assert_eq!(
+    //             modified
+    //                 .generate_column(IdentityColumnStruct((0, One)))
+    //                 .into_column(),
+    //             SparseVector::new(vec![(0, RB!(1, 11))], m),
+    //         );
+    //         assert_eq!(
+    //             modified
+    //                 .generate_column(IdentityColumnStruct((1, One)))
+    //                 .into_column(),
+    //             SparseVector::new(
+    //                 vec![
+    //                     (0, RB!(-2, 11)),
+    //                     (1, RB!(-363, 215)),
+    //                     (2, RB!(-1, 43)),
+    //                     (3, RB!(693, 430))
     //                 ],
-    //                 updates: vec![(
-    //                     EtaFile::new(vec![(3, RB!(5, 6))], 1, m),
-    //                     RotateToBackPermutation::new(1, m),
-    //                 )],
-    //             };
-    //             assert_eq!(modified, expected);
-    //
-    //             // Columns
-    //             assert_eq!(
-    //                 modified
-    //                     .generate_column(IdentityColumnStruct((0, One)))
-    //                     .into_column(),
-    //                 SparseVector::standard_basis_vector(0, m),
-    //             );
-    //             assert_eq!(
-    //                 modified
-    //                     .generate_column(IdentityColumnStruct((1, One)))
-    //                     .into_column(),
-    //                 SparseVector::new(vec![(1, RB!(-3, 4)), (2, RB!(9, 16)), (3, RB!(1, 2))], m),
-    //             );
-    //             assert_eq!(
-    //                 modified
-    //                     .generate_column(IdentityColumnStruct((2, One)))
-    //                     .into_column(),
-    //                 SparseVector::new(vec![(2, RB!(1, 4))], m),
-    //             );
-    //             assert_eq!(
-    //                 modified
-    //                     .generate_column(IdentityColumnStruct((3, One)))
-    //                     .into_column(),
-    //                 SparseVector::new(vec![(1, RB!(5, 8)), (2, RB!(-15, 32)), (3, RB!(-1, 4))], m),
-    //             );
-    //
-    //             // Rows
-    //             assert_eq!(
-    //                 modified.basis_inverse_row(0),
-    //                 SparseVector::standard_basis_vector(0, m),
-    //             );
-    //             assert_eq!(
-    //                 modified.basis_inverse_row(1),
-    //                 SparseVector::new(vec![(1, RB!(-3, 4)), (3, RB!(5, 8))], m),
-    //             );
-    //             assert_eq!(
-    //                 modified.basis_inverse_row(2),
-    //                 SparseVector::new(vec![(1, RB!(9, 16)), (2, RB!(1, 4)), (3, RB!(-15, 32))], m),
-    //             );
-    //             assert_eq!(
-    //                 modified.basis_inverse_row(3),
-    //                 SparseVector::new(vec![(1, RB!(1, 2)), (3, RB!(-1, 4))], m),
-    //             );
-    //         }
-    //
-    //         /// From "A review of the LU update in the simplex algorithm" by Joseph M. Elble and
-    //         /// Nikolaes V. Sahinidis, Int. J. Mathematics in Operational Research, Vol. 4, No. 4, 2012.
-    //         #[test]
-    //         fn from_5x5_identity() {
-    //             let m = 5;
-    //             let mut initial = LUDecomposition {
-    //                 row_permutation: FullPermutation::identity(m),
-    //                 column_permutation: FullPermutation::identity(m),
-    //                 lower_triangular: vec![vec![]; m - 1],
-    //                 upper_triangular: vec![
-    //                     vec![(0, RB!(11))],
-    //                     vec![(0, RB!(12)), (1, RB!(22))],
-    //                     vec![(0, RB!(13)), (1, RB!(23)), (2, RB!(33))],
-    //                     vec![(0, RB!(14)), (1, RB!(24)), (2, RB!(34)), (3, RB!(44))],
-    //                     vec![
-    //                         (0, RB!(15)),
-    //                         (1, RB!(25)),
-    //                         (2, RB!(35)),
-    //                         (3, RB!(45)),
-    //                         (4, RB!(55)),
-    //                     ],
+    //                 m
+    //             ),
+    //         );
+    //         assert_eq!(
+    //             modified
+    //                 .generate_column(IdentityColumnStruct((2, One)))
+    //                 .into_column(),
+    //             SparseVector::new(
+    //                 vec![
+    //                     (0, RB!(1, 11)),
+    //                     (1, RB!(253, 215)),
+    //                     (2, RB!(2, 43)),
+    //                     (3, RB!(-483, 430))
     //                 ],
-    //                 updates: vec![],
-    //             };
-    //
-    //             let spike = vec![(0, RB!(12)), (1, RB!(22)), (2, RB!(32)), (3, RB!(42))];
-    //             let column_computation_info = ColumnAndSpike {
-    //                 column: SparseVector::new(spike.clone(), m),
-    //                 spike,
-    //             };
-    //             initial.change_basis(1, column_computation_info);
-    //             let modified = initial;
-    //
-    //             let expected = LUDecomposition {
-    //                 row_permutation: FullPermutation::identity(m),
-    //                 column_permutation: FullPermutation::identity(m),
-    //                 lower_triangular: vec![vec![]; m - 1],
-    //                 upper_triangular: vec![
-    //                     vec![(0, RB!(11))],
-    //                     vec![(0, RB!(13)), (1, RB!(33))],
-    //                     vec![(0, RB!(14)), (1, RB!(34)), (2, RB!(44))],
-    //                     vec![(0, RB!(15)), (1, RB!(35)), (2, RB!(45)), (3, RB!(55))],
-    //                     vec![
-    //                         (0, RB!(12)),
-    //                         (1, RB!(32)),
-    //                         (2, RB!(42)),
-    //                         (4, RB!(-215, 363)),
-    //                     ],
+    //                 m
+    //             ),
+    //         );
+    //         assert_eq!(
+    //             modified
+    //                 .generate_column(IdentityColumnStruct((3, One)))
+    //                 .into_column(),
+    //             SparseVector::new(vec![(1, RB!(1, 86)), (2, RB!(-1, 43)), (3, RB!(1, 86))], m),
+    //         );
+    //         assert_eq!(
+    //             modified
+    //                 .generate_column(IdentityColumnStruct((4, One)))
+    //                 .into_column(),
+    //             SparseVector::new(
+    //                 vec![(1, RB!(1, 110)), (3, RB!(-3, 110)), (4, RB!(1, 55))],
+    //                 m
+    //             ),
+    //         );
+    //         // Sum of two
+    //         assert_eq!(
+    //             modified
+    //                 .generate_column(matrix_data::Column::TwoSlack(
+    //                     [(0, RB!(1)), (1, RB!(1))],
+    //                     []
+    //                 ))
+    //                 .into_column(),
+    //             SparseVector::new(
+    //                 vec![
+    //                     (0, RB!(-1, 11)),
+    //                     (1, RB!(-363, 215)),
+    //                     (2, RB!(-1, 43)),
+    //                     (3, RB!(693, 430))
     //                 ],
-    //                 updates: vec![(
-    //                     EtaFile::new(
-    //                         vec![
-    //                             (2, RB!(23, 33)),
-    //                             (3, RB!(24 * 33 - 34 * 23, 33 * 44)),
-    //                             (4, RB!(43, 7986)),
-    //                         ],
-    //                         1,
-    //                         m,
-    //                     ),
-    //                     RotateToBackPermutation::new(1, m),
-    //                 )],
-    //             };
-    //             assert_eq!(modified, expected);
+    //                 m
+    //             ),
+    //         );
     //
-    //             // Columns
-    //             assert_eq!(
-    //                 modified
-    //                     .generate_column(IdentityColumnStruct((0, One)))
-    //                     .into_column(),
-    //                 SparseVector::new(vec![(0, RB!(1, 11))], m),
-    //             );
-    //             assert_eq!(
-    //                 modified
-    //                     .generate_column(IdentityColumnStruct((1, One)))
-    //                     .into_column(),
-    //                 SparseVector::new(
-    //                     vec![
-    //                         (0, RB!(-2, 11)),
-    //                         (1, RB!(-363, 215)),
-    //                         (2, RB!(-1, 43)),
-    //                         (3, RB!(693, 430))
-    //                     ],
-    //                     m
-    //                 ),
-    //             );
-    //             assert_eq!(
-    //                 modified
-    //                     .generate_column(IdentityColumnStruct((2, One)))
-    //                     .into_column(),
-    //                 SparseVector::new(
-    //                     vec![
-    //                         (0, RB!(1, 11)),
-    //                         (1, RB!(253, 215)),
-    //                         (2, RB!(2, 43)),
-    //                         (3, RB!(-483, 430))
-    //                     ],
-    //                     m
-    //                 ),
-    //             );
-    //             assert_eq!(
-    //                 modified
-    //                     .generate_column(IdentityColumnStruct((3, One)))
-    //                     .into_column(),
-    //                 SparseVector::new(vec![(1, RB!(1, 86)), (2, RB!(-1, 43)), (3, RB!(1, 86))], m),
-    //             );
-    //             assert_eq!(
-    //                 modified
-    //                     .generate_column(IdentityColumnStruct((4, One)))
-    //                     .into_column(),
-    //                 SparseVector::new(
-    //                     vec![(1, RB!(1, 110)), (3, RB!(-3, 110)), (4, RB!(1, 55))],
-    //                     m
-    //                 ),
-    //             );
-    //             // Sum of two
-    //             assert_eq!(
-    //                 modified
-    //                     .generate_column(matrix_data::Column::TwoSlack(
-    //                         [(0, RB!(1)), (1, RB!(1))],
-    //                         []
-    //                     ))
-    //                     .into_column(),
-    //                 SparseVector::new(
-    //                     vec![
-    //                         (0, RB!(-1, 11)),
-    //                         (1, RB!(-363, 215)),
-    //                         (2, RB!(-1, 43)),
-    //                         (3, RB!(693, 430))
-    //                     ],
-    //                     m
-    //                 ),
-    //             );
-    //
-    //             // Rows
-    //             assert_eq!(
-    //                 modified.basis_inverse_row(0),
-    //                 SparseVector::new(vec![(0, RB!(1, 11)), (1, RB!(-2, 11)), (2, RB!(1, 11))], m),
-    //             );
-    //             assert_eq!(
-    //                 modified.basis_inverse_row(1),
-    //                 SparseVector::new(
-    //                     vec![
-    //                         (1, RB!(-363, 215)),
-    //                         (2, RB!(253, 215)),
-    //                         (3, RB!(1, 86)),
-    //                         (4, RB!(1, 110))
-    //                     ],
-    //                     m
-    //                 ),
-    //             );
-    //             assert_eq!(
-    //                 modified.basis_inverse_row(2),
-    //                 SparseVector::new(vec![(1, RB!(-1, 43)), (2, RB!(2, 43)), (3, RB!(-1, 43))], m),
-    //             );
-    //             assert_eq!(
-    //                 modified.basis_inverse_row(3),
-    //                 SparseVector::new(
-    //                     vec![
-    //                         (1, RB!(693, 430)),
-    //                         (2, RB!(-483, 430)),
-    //                         (3, RB!(1, 86)),
-    //                         (4, RB!(-3, 110))
-    //                     ],
-    //                     m
-    //                 ),
-    //             );
-    //             assert_eq!(
-    //                 modified.basis_inverse_row(4),
-    //                 SparseVector::new(vec![(4, RB!(1, 55))], m),
-    //             );
-    //         }
+    //         // Rows
+    //         assert_eq!(
+    //             modified.basis_inverse_row(0),
+    //             SparseVector::new(vec![(0, RB!(1, 11)), (1, RB!(-2, 11)), (2, RB!(1, 11))], m),
+    //         );
+    //         assert_eq!(
+    //             modified.basis_inverse_row(1),
+    //             SparseVector::new(
+    //                 vec![
+    //                     (1, RB!(-363, 215)),
+    //                     (2, RB!(253, 215)),
+    //                     (3, RB!(1, 86)),
+    //                     (4, RB!(1, 110))
+    //                 ],
+    //                 m
+    //             ),
+    //         );
+    //         assert_eq!(
+    //             modified.basis_inverse_row(2),
+    //             SparseVector::new(vec![(1, RB!(-1, 43)), (2, RB!(2, 43)), (3, RB!(-1, 43))], m),
+    //         );
+    //         assert_eq!(
+    //             modified.basis_inverse_row(3),
+    //             SparseVector::new(
+    //                 vec![
+    //                     (1, RB!(693, 430)),
+    //                     (2, RB!(-483, 430)),
+    //                     (3, RB!(1, 86)),
+    //                     (4, RB!(-3, 110))
+    //                 ],
+    //                 m
+    //             ),
+    //         );
+    //         assert_eq!(
+    //             modified.basis_inverse_row(4),
+    //             SparseVector::new(vec![(4, RB!(1, 55))], m),
+    //         );
     //     }
+    // }
 }
