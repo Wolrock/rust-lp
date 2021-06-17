@@ -12,7 +12,7 @@ use num::Zero;
 
 use crate::algorithm::two_phase::matrix_provider::column::{Column, OrderedColumn};
 use crate::algorithm::two_phase::tableau::inverse_maintenance::carry::lower_upper_remultiply_factor::permutation::{
-    FullPermutation, Permutation, Rotate,
+    FullPermutation, Permutation,
 };
 use crate::algorithm::two_phase::tableau::inverse_maintenance::carry::BasisInverse;
 use crate::algorithm::two_phase::tableau::inverse_maintenance::{ops, ColumnComputationInfo};
