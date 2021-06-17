@@ -315,7 +315,7 @@ where
             // Also sorts after the row permutation
             .collect::<BTreeMap<_, _>>();
 
-        // TODO(Debug): remove old code
+        // TODO(PERFORMANCE): refactor such that this is not required
         let mut rhs: Vec<(usize, F)> = Vec::from_iter(rhs.into_iter());
 
         // apply row updates to rhs
@@ -377,22 +377,24 @@ where
 
     fn basis_inverse_row(&self, mut row: usize) -> SparseVector<Self::F, Self::F> {
         self.column_permutation.forward(&mut row);
+
         for (_, q) in &self.updates {
-            q.forward(&mut row);
+            q.backward(&mut row);
         }
 
+        // unit vector where v[row]=1
         let initial_rhs = iter::once((row, Self::F::one())).collect();
-        let mut w = self.invert_upper_left(initial_rhs);
 
-        for (eta, q) in self.updates.iter().rev() {
-            q.backward_sorted(&mut w);
+        let mut w = self.invert_upper_left(initial_rhs);
+        let mut tuples = self.invert_lower_left(w.into_iter().collect());
+
+        for (p, _) in self.updates.iter().rev() {
+            p.backward_sorted(&mut tuples);
         }
 
-        let mut tuples = self.invert_lower_left(w.into_iter().collect());
         self.row_permutation.backward_sorted(&mut tuples);
 
-        SparseVector::new(tuples, self.m());
-        todo!();
+        SparseVector::new(tuples, self.m())
     }
 
     fn m(&self) -> usize {
@@ -1058,22 +1060,22 @@ mod test {
         );
 
         // Rows
-        // assert_eq!(
-        //     modified.basis_inverse_row(0),
-        //     SparseVector::standard_basis_vector(0, m),
-        // );
-        // assert_eq!(
-        //     modified.basis_inverse_row(1),
-        //     SparseVector::new(vec![(1, RB!(-3, 4)), (3, RB!(5, 8))], m),
-        // );
-        // assert_eq!(
-        //     modified.basis_inverse_row(2),
-        //     SparseVector::new(vec![(1, RB!(9, 16)), (2, RB!(1, 4)), (3, RB!(-15, 32))], m),
-        // );
-        // assert_eq!(
-        //     modified.basis_inverse_row(3),
-        //     SparseVector::new(vec![(1, RB!(1, 2)), (3, RB!(-1, 4))], m),
-        // );
+        assert_eq!(
+            modified.basis_inverse_row(0),
+            SparseVector::standard_basis_vector(0, m),
+        );
+        assert_eq!(
+            modified.basis_inverse_row(1),
+            SparseVector::new(vec![(1, RB!(-3, 4)), (3, RB!(5, 8))], m),
+        );
+        assert_eq!(
+            modified.basis_inverse_row(2),
+            SparseVector::new(vec![(1, RB!(9, 16)), (2, RB!(1, 4)), (3, RB!(-15, 32))], m),
+        );
+        assert_eq!(
+            modified.basis_inverse_row(3),
+            SparseVector::new(vec![(1, RB!(1, 2)), (3, RB!(-1, 4))], m),
+        );
     }
 
     ///From "A review of the LU update in the simplex algorithm" by Joseph M. Elble and
@@ -1212,43 +1214,42 @@ mod test {
             ),
         );
 
-        //         // Rows
-        //         assert_eq!(
-        //             modified.basis_inverse_row(0),
-        //             SparseVector::new(vec![(0, RB!(1, 11)), (1, RB!(-2, 11)), (2, RB!(1, 11))], m),
-        //         );
-        //         assert_eq!(
-        //             modified.basis_inverse_row(1),
-        //             SparseVector::new(
-        //                 vec![
-        //                     (1, RB!(-363, 215)),
-        //                     (2, RB!(253, 215)),
-        //                     (3, RB!(1, 86)),
-        //                     (4, RB!(1, 110))
-        //                 ],
-        //                 m
-        //             ),
-        //         );
-        //         assert_eq!(
-        //             modified.basis_inverse_row(2),
-        //             SparseVector::new(vec![(1, RB!(-1, 43)), (2, RB!(2, 43)), (3, RB!(-1, 43))], m),
-        //         );
-        //         assert_eq!(
-        //             modified.basis_inverse_row(3),
-        //             SparseVector::new(
-        //                 vec![
-        //                     (1, RB!(693, 430)),
-        //                     (2, RB!(-483, 430)),
-        //                     (3, RB!(1, 86)),
-        //                     (4, RB!(-3, 110))
-        //                 ],
-        //                 m
-        //             ),
-        //         );
-        //         assert_eq!(
-        //             modified.basis_inverse_row(4),
-        //             SparseVector::new(vec![(4, RB!(1, 55))], m),
-        //         );
-        //     }
+        // Rows
+        assert_eq!(
+            modified.basis_inverse_row(0),
+            SparseVector::new(vec![(0, RB!(1, 11)), (1, RB!(-2, 11)), (2, RB!(1, 11))], m),
+        );
+        assert_eq!(
+            modified.basis_inverse_row(1),
+            SparseVector::new(
+                vec![
+                    (1, RB!(-363, 215)),
+                    (2, RB!(253, 215)),
+                    (3, RB!(1, 86)),
+                    (4, RB!(1, 110))
+                ],
+                m
+            ),
+        );
+        assert_eq!(
+            modified.basis_inverse_row(2),
+            SparseVector::new(vec![(1, RB!(-1, 43)), (2, RB!(2, 43)), (3, RB!(-1, 43))], m),
+        );
+        assert_eq!(
+            modified.basis_inverse_row(3),
+            SparseVector::new(
+                vec![
+                    (1, RB!(693, 430)),
+                    (2, RB!(-483, 430)),
+                    (3, RB!(1, 86)),
+                    (4, RB!(-3, 110))
+                ],
+                m
+            ),
+        );
+        assert_eq!(
+            modified.basis_inverse_row(4),
+            SparseVector::new(vec![(4, RB!(1, 55))], m),
+        );
     }
 }
