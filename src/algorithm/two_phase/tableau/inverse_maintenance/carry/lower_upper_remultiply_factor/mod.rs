@@ -193,7 +193,16 @@ where
             is_square && max_index
         });
         // Compute LU of active block
-        // println!("{:?}", active_block_product_T.1);
+        let print_active_block: Vec<Vec<(usize, f64)>> = (0..active_block_product_T.0)
+            .map(|j| {
+                active_block_product_T.1[j]
+                    .iter()
+                    .map(|&(i, _)| (i, 1.))
+                    .collect()
+            })
+            .collect();
+
+        println!("Active block product: {:?}", print_active_block);
         let mut active_block_lu = LUDecomposition::<F>::rows(active_block_product_T.1);
         let mut l_bar = (
             active_block_product.0,
