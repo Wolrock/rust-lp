@@ -5,7 +5,7 @@ use num::FromPrimitive;
 use rust_lp::algorithm::{OptimizationResult, SolveRelaxation};
 use rust_lp::algorithm::two_phase::matrix_provider::MatrixProvider;
 use rust_lp::algorithm::two_phase::tableau::inverse_maintenance::carry::Carry;
-use rust_lp::algorithm::two_phase::tableau::inverse_maintenance::carry::lower_upper::LUDecomposition;
+use rust_lp::algorithm::two_phase::tableau::inverse_maintenance::carry::lower_upper_remultiply_factor::LUDecomposition;
 use rust_lp::data::linear_program::general_form::GeneralForm;
 use rust_lp::data::number_types::rational::{Rational64, RationalBig};
 use rust_lp::data::number_types::traits::Abs;

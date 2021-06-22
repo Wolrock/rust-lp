@@ -10,7 +10,7 @@ use num::{One, Zero};
 use rust_lp::algorithm::{OptimizationResult, SolveRelaxation};
 use rust_lp::algorithm::two_phase::matrix_provider::MatrixProvider;
 use rust_lp::algorithm::two_phase::tableau::inverse_maintenance::carry::Carry;
-use rust_lp::algorithm::two_phase::tableau::inverse_maintenance::carry::lower_upper::LUDecomposition;
+use rust_lp::algorithm::two_phase::tableau::inverse_maintenance::carry::lower_upper_remultiply_factor::LUDecomposition;
 use rust_lp::algorithm::two_phase::tableau::inverse_maintenance::ops as im_ops;
 use rust_lp::algorithm::two_phase::tableau::kind::artificial::Cost;
 use rust_lp::data::linear_algebra::traits::Element;
@@ -45,12 +45,19 @@ fn get_test_file_path(name: &str) -> PathBuf {
 }
 
 fn solve<
-    IMT: im_ops::Internal + im_ops::InternalHR + im_ops::Column<GFT> + AddAssign<GFT> + PartialEq<GFT> + Ord,
+    IMT: im_ops::Internal
+        + im_ops::InternalHR
+        + im_ops::Column<GFT>
+        + AddAssign<GFT>
+        + PartialEq<GFT>
+        + Ord,
     GFT: 'static + From<Rational64> + Zero + One + Ord + Element + OrderedField,
->(file_name: &str) -> Solution<IMT>
+>(
+    file_name: &str,
+) -> Solution<IMT>
 where
     for<'r> &'r GFT: OrderedFieldRef<GFT>,
-    for<'r> &'r IMT: Add<&'r GFT, Output=IMT> + Sub<&'r IMT, Output=IMT>,
+    for<'r> &'r IMT: Add<&'r GFT, Output = IMT> + Sub<&'r IMT, Output = IMT>,
     for<'r> IMT: im_ops::Cost<Option<&'r GFT>> + im_ops::Cost<Cost>,
 {
     let path = get_test_file_path(file_name);
@@ -60,15 +67,17 @@ where
     let data = match general.derive_matrix_data() {
         Ok(data) => data,
         Err(LinearProgramType::FiniteOptimum(Solution {
-                                                 objective_value, solution_values,
-                                             })) => {
+            objective_value,
+            solution_values,
+        })) => {
             return Solution {
                 objective_value: objective_value.into(),
-                solution_values: solution_values.into_iter()
+                solution_values: solution_values
+                    .into_iter()
                     .map(|(name, value)| (name, value.into()))
                     .collect(),
             }
-        },
+        }
         _ => panic!(),
     };
     let result = data.solve_relaxation::<Carry<IMT, LUDecomposition<_>>>();
@@ -77,7 +86,7 @@ where
         OptimizationResult::FiniteOptimum(vector) => {
             let reconstructed = data.reconstruct_solution(vector);
             general.compute_full_solution_with_reduced_solution::<IMT>(reconstructed)
-        },
+        }
         _ => panic!(),
     }
 }

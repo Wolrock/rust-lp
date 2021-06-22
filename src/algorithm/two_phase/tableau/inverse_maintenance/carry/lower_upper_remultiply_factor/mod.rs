@@ -113,9 +113,9 @@ where
             // Compute and store the column permutations applied through Q
             // -> Q places spike in column p in position m and moves other columns to the left
             self.column_permutation.forward(&mut pivot_column_index);
-            for (p, q) in &self.updates {
+            for (p, q) in self.updates.iter().rev() {
                 Permutation::forward(q, &mut pivot_column_index);
-                Permutation::forward(p, &mut pivot_column_index);
+                // Permutation::forward(p, &mut pivot_column_index);
             }
             pivot_column_index
         };
@@ -135,6 +135,7 @@ where
         let mut active_block_column = pivot_column_index;
         let l = &mut self.lower_triangular;
         let u = &mut self.upper_triangular;
+        // TODO(Debug): this no change case might be wrong
         if active_block_column == active_block_row {
             self.updates.push((
                 FullPermutation::identity(u.len()),
@@ -179,8 +180,20 @@ where
                 active_block_product_T.1[*i].push((j, x.clone()));
             }
         }
-
+        debug_assert!({
+            let is_square = active_block_product.0 == active_block_product.1.len();
+            // let indicis_increase = active_block_product
+            //     .1
+            //     .iter()
+            //     .all(|row| row.iter().windows(2).all(|w| w.0 .0 < w.1 .0));
+            let max_index = active_block_product
+                .1
+                .iter()
+                .all(|row| row.iter().max_by_key(|(i, _)| i).unwrap().0 < active_block_product.0);
+            is_square && max_index
+        });
         // Compute LU of active block
+        // println!("{:?}", active_block_product_T.1);
         let mut active_block_lu = LUDecomposition::<F>::rows(active_block_product_T.1);
         let mut l_bar = (
             active_block_product.0,
@@ -242,17 +255,17 @@ where
         let q_bar_inv = generate_permutation_matrix::<F>(&active_block_lu.column_permutation);
 
         // Compute new entries for L matrix
-        l_21 = multiply_matrices(&p_bar_inv, &l_21);
+        l_21 = multiply_matrices(&p_bar, &l_21);
         l_32 = multiply_matrices(
             &multiply_matrices(&l_32, &l_22_inv),
-            &multiply_matrices(&p_bar, &l_bar),
+            &multiply_matrices(&p_bar_inv, &l_bar),
         );
 
         // Compute new entries for U matrix
         // TODO(Debug): u_23 is not sorted? might be a bug. insert block deals with this by using binary search and insert
         u_12 = multiply_matrices(&u_12, &q_bar);
         u_23 = multiply_matrices(
-            &multiply_matrices(&l_bar_inv, &p_bar_inv),
+            &multiply_matrices(&l_bar_inv, &p_bar),
             &multiply_matrices(&l_22, &u_23),
         );
 
@@ -268,7 +281,7 @@ where
             (0..l.len())
                 .map(|j| {
                     if j >= active_block_column && j <= active_block_row {
-                        p_bar.1[j - active_block_column][0].0 + active_block_column
+                        p_bar_inv.1[j - active_block_column][0].0 + active_block_column
                     } else {
                         j
                     }
@@ -279,7 +292,7 @@ where
             (0..l.len())
                 .map(|j| {
                     if j >= active_block_column && j <= active_block_row {
-                        q_bar.1[j - active_block_column][0].0 + active_block_column
+                        q_bar_inv.1[j - active_block_column][0].0 + active_block_column
                     } else {
                         j
                     }
@@ -344,7 +357,7 @@ where
 
         // Apply column permutation updates
         for (_, q) in self.updates.iter().rev() {
-            q.backward_sorted(&mut column);
+            q.forward_sorted(&mut column);
         }
         // Apply initial column permutation
         self.column_permutation.forward_sorted(&mut column);
@@ -379,7 +392,7 @@ where
         self.column_permutation.forward(&mut row);
 
         for (_, q) in &self.updates {
-            q.backward(&mut row);
+            q.forward(&mut row);
         }
 
         // unit vector where v[row]=1
@@ -679,6 +692,7 @@ where
     }
 }
 
+/// Dunno
 #[derive(Debug)]
 pub struct ColumnAndSpike<F> {
     column: SparseVector<F, F>,

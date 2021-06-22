@@ -7,7 +7,7 @@ use rust_lp::algorithm::{OptimizationResult, SolveRelaxation};
 use rust_lp::algorithm::two_phase::matrix_provider::MatrixProvider;
 use rust_lp::algorithm::two_phase::tableau::inverse_maintenance::carry::basis_inverse_rows::BasisInverseRows;
 use rust_lp::algorithm::two_phase::tableau::inverse_maintenance::carry::Carry;
-use rust_lp::algorithm::two_phase::tableau::inverse_maintenance::carry::lower_upper::LUDecomposition;
+use rust_lp::algorithm::two_phase::tableau::inverse_maintenance::carry::lower_upper_remultiply_factor::LUDecomposition;
 use rust_lp::data::linear_algebra::traits::Element;
 use rust_lp::data::linear_program::general_form::GeneralForm;
 use rust_lp::data::linear_program::solution::Solution;
@@ -18,12 +18,12 @@ use rust_lp::RB;
 
 use super::get_test_file_path;
 
-fn to_general_form<T: From<Rational64> + Zero + One + Ord + Element + Neg<Output=T>>(
+fn to_general_form<T: From<Rational64> + Zero + One + Ord + Element + Neg<Output = T>>(
     file_name: &str,
 ) -> GeneralForm<T>
 where
-    for<'r> T: Add<&'r T, Output=T>,
-    for<'r> &'r T: Neg<Output=T>,
+    for<'r> T: Add<&'r T, Output = T>,
+    for<'r> &'r T: Neg<Output = T>,
 {
     let path = get_test_file_path(file_name);
     let result = import(&path).unwrap();
@@ -41,14 +41,17 @@ fn adlittle() {
 
     let mut general = result.try_into().unwrap();
     let data = general.derive_matrix_data().unwrap();
-    let result = data.solve_relaxation::<Carry<S, LURF<_>>>();
+    let result = data.solve_relaxation::<Carry<S, LUDecomposition<_>>>();
 
     match result {
         OptimizationResult::FiniteOptimum(vector) => {
             let reconstructed = data.reconstruct_solution(vector);
             let solution = general.compute_full_solution_with_reduced_solution(reconstructed);
-            assert_eq!(solution.objective_value, S::from("24975305659811992079614961229/120651674036153428931840"));
-        },
+            assert_eq!(
+                solution.objective_value,
+                S::from("24975305659811992079614961229/120651674036153428931840")
+            );
+        }
         _ => assert!(false),
     }
 }
@@ -67,7 +70,7 @@ fn afiro() {
             let reconstructed = data.reconstruct_solution(vector);
             let solution = general.compute_full_solution_with_reduced_solution(reconstructed);
             let expected = Solution::new(
-                RB!(-406_659, 875),  // GLPK
+                RB!(-406_659, 875), // GLPK
                 vec![
                     ("X01".to_string(), RB!(80, 1)),
                     ("X02".to_string(), RB!(51, 2)),
@@ -105,7 +108,7 @@ fn afiro() {
             );
 
             assert!(expected.is_probably_equal_to(&solution, 0.1_f64));
-        },
+        }
         _ => assert!(false),
     }
 }
@@ -132,16 +135,19 @@ fn maros() {
         OptimizationResult::FiniteOptimum(vector) => {
             let reconstructed = data.reconstruct_solution(vector);
             let solution = general.compute_full_solution_with_reduced_solution(reconstructed);
-            assert_eq!(solution, Solution::new(
-                S::new(385, 3),  // GLPK
-                vec![
-                    ("VOL1".to_string(), S::new(10, 3)),
-                    ("VOL2".to_string(), S::new(40, 3)),
-                    ("VOL3".to_string(), S::new(20, 1)),
-                    ("VOL4".to_string(), S::new(0, 1)),
-                ],
-            ));
-        },
+            assert_eq!(
+                solution,
+                Solution::new(
+                    S::new(385, 3), // GLPK
+                    vec![
+                        ("VOL1".to_string(), S::new(10, 3)),
+                        ("VOL2".to_string(), S::new(40, 3)),
+                        ("VOL3".to_string(), S::new(20, 1)),
+                        ("VOL4".to_string(), S::new(0, 1)),
+                    ],
+                )
+            );
+        }
         _ => assert!(false),
     }
 }
@@ -154,7 +160,7 @@ fn nazareth() {
     let mut general = to_general_form::<T>("nazareth");
     let data = general.derive_matrix_data().unwrap();
     let result = data.solve_relaxation::<Carry<S, LUDecomposition<_>>>();
-    assert_eq!(result, OptimizationResult::Unbounded);  // GLPK
+    assert_eq!(result, OptimizationResult::Unbounded); // GLPK
 }
 
 #[test]
@@ -170,15 +176,18 @@ fn testprob() {
         OptimizationResult::FiniteOptimum(vector) => {
             let reconstructed = data.reconstruct_solution(vector);
             let solution = general.compute_full_solution_with_reduced_solution(reconstructed);
-            assert_eq!(solution, Solution::new(
-                S::new(54, 1),  // GLPK
-                vec![
-                    ("X1".to_string(), S::new(4, 1)),
-                    ("X2".to_string(), S::new(-1, 1)),
-                    ("X3".to_string(), S::new(6, 1)),
-                ],
-            ));
-        },
+            assert_eq!(
+                solution,
+                Solution::new(
+                    S::new(54, 1), // GLPK
+                    vec![
+                        ("X1".to_string(), S::new(4, 1)),
+                        ("X2".to_string(), S::new(-1, 1)),
+                        ("X3".to_string(), S::new(6, 1)),
+                    ],
+                )
+            );
+        }
         _ => assert!(false),
     }
 }
