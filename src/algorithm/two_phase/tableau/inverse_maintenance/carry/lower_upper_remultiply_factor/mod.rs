@@ -114,7 +114,7 @@ where
             // -> Q places spike in column p in position m and moves other columns to the left
             self.column_permutation.forward(&mut pivot_column_index);
             for (p, q) in self.updates.iter().rev() {
-                Permutation::forward(q, &mut pivot_column_index);
+                Permutation::backward(q, &mut pivot_column_index);
                 // Permutation::forward(p, &mut pivot_column_index);
             }
             pivot_column_index
@@ -201,7 +201,8 @@ where
                     .collect()
             })
             .collect();
-
+        println!("Active Block Row: {}", active_block_row);
+        println!("Active Block Column: {}", active_block_column);
         println!("Active block product: {:?}", print_active_block);
         let mut active_block_lu = LUDecomposition::<F>::rows(active_block_product_T.1);
         let mut l_bar = (

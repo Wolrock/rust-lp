@@ -2,3 +2,4 @@ target/
 metrics/
 perf*
 Cargo.lock
+.idea/*
