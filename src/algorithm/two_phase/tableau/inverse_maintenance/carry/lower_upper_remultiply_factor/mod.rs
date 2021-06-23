@@ -137,6 +137,7 @@ where
         let u = &mut self.upper_triangular;
         // TODO(Debug): this no change case might be wrong
         if active_block_column == active_block_row {
+            println!("NO CHANGE");
             self.updates.push((
                 FullPermutation::identity(u.len()),
                 FullPermutation::identity(u.len()),
