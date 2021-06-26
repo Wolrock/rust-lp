@@ -113,13 +113,13 @@ where
             // Compute and store the column permutations applied through Q
             // -> Q places spike in column p in position m and moves other columns to the left
             self.column_permutation.forward(&mut pivot_column_index);
-            for (p, q) in self.updates.iter().rev() {
-                Permutation::backward(q, &mut pivot_column_index);
-                // Permutation::forward(p, &mut pivot_column_index);
+            for (p, q) in &self.updates {
+                Permutation::forward(q, &mut pivot_column_index);
+                // Permutation::backward(p, &mut pivot_column_index);
             }
             pivot_column_index
         };
-
+        // println!("pivot_column_index: {}", pivot_column_index);
         //********************************
         // Initial active block boundaries:
         //********************************
@@ -130,7 +130,7 @@ where
         } = column;
 
         self.upper_triangular[pivot_column_index] = spike;
-
+        println!("SPIKE: {:?}", self.upper_triangular[pivot_column_index]);
         let mut active_block_row = self.upper_triangular[pivot_column_index].last().unwrap().0;
         let mut active_block_column = pivot_column_index;
         let l = &mut self.lower_triangular;
@@ -183,29 +183,24 @@ where
         }
         debug_assert!({
             let is_square = active_block_product.0 == active_block_product.1.len();
-            // let indicis_increase = active_block_product
-            //     .1
-            //     .iter()
-            //     .all(|row| row.iter().windows(2).all(|w| w.0 .0 < w.1 .0));
+            let indicis_increase = active_block_product
+                .1
+                .iter()
+                .all(|vec| vec.is_sorted_by_key(|&(i, _)| i));
             let max_index = active_block_product
                 .1
                 .iter()
                 .all(|row| row.iter().max_by_key(|(i, _)| i).unwrap().0 < active_block_product.0);
-            is_square && max_index
+            is_square && max_index && indicis_increase
         });
         // Compute LU of active block
-        let print_active_block: Vec<Vec<(usize, f64)>> = (0..active_block_product_T.0)
-            .map(|j| {
-                active_block_product_T.1[j]
-                    .iter()
-                    .map(|&(i, _)| (i, 1.))
-                    .collect()
-            })
-            .collect();
+
         println!("Active Block Row: {}", active_block_row);
         println!("Active Block Column: {}", active_block_column);
-        println!("Active block product: {:?}", print_active_block);
+        println!("Active block product: {:?}", active_block_product_T);
         let mut active_block_lu = LUDecomposition::<F>::rows(active_block_product_T.1);
+        // println!("Active block LU: {}", active_block_lu);
+
         let mut l_bar = (
             active_block_product.0,
             active_block_lu.lower_triangular.clone(),
@@ -222,7 +217,13 @@ where
         for col in 0..l_bar.1.len() {
             l_bar.1[col].insert(0, (col, F::one()));
             id[col].push((col, F::one()));
+            debug_assert_eq!(
+                l_bar.1[col][0],
+                (col, F::one()),
+                "Unit lower triangular conversion not working"
+            );
         }
+
         let mut p_bar = generate_permutation_matrix(&active_block_lu.row_permutation);
         let mut q_bar = generate_permutation_matrix(&active_block_lu.column_permutation);
 
@@ -241,29 +242,75 @@ where
         }
         let l_bar_inv = (active_block_product.0, l_bar_inv);
 
+        debug_assert_eq!(
+            multiply_matrices(&l_bar_inv, &l_bar),
+            (l_bar_inv.0, id.clone()),
+            "Inverse computation of L_BAR incorrect"
+        );
+
         // remove unit diagonal and last column for inversion in LU decomposition
         for col in 0..l_22.1.len() - 1 {
+            // normalize column to unit lower triangular
             active_block_lu.lower_triangular[col] = l_22.1[col].clone();
+            debug_assert_eq!(
+                l_22.1[col][0],
+                (col, F::one()),
+                "L_22 is not UNIT lower triangular"
+            );
             active_block_lu.lower_triangular[col].remove(0);
         }
 
-        for i in 0..active_block_product.0 - 1 {
+        for i in 0..active_block_product.0 {
             let mut unit_column = BTreeMap::new();
             unit_column.insert(i, F::one());
 
             l_22_inv.push(active_block_lu.invert_lower_right(unit_column));
         }
-        // make l_22 square
-        l_22_inv.push(vec![]);
-        // Make l_22 inv unit triangular
-        for col in 0..l_22.1.len() {
-            l_22_inv[col].insert(0, (col, F::one()));
-        }
 
         let l_22_inv = (active_block_product.0, l_22_inv);
 
+        debug_assert_eq!(
+            multiply_matrices(&l_22_inv, &l_22),
+            (l_22_inv.0, id.clone()),
+            "Inverse computation of L_22 incorrect"
+        );
+
+        //TODO(Performance): use methods instead of full matrix generation
         let p_bar_inv = generate_permutation_matrix::<F>(&active_block_lu.row_permutation);
         let q_bar_inv = generate_permutation_matrix::<F>(&active_block_lu.column_permutation);
+
+        debug_assert_eq!(
+            multiply_matrices(&p_bar_inv, &p_bar),
+            (p_bar_inv.0, id.clone()),
+            "Permutation P inverse is incorrect"
+        );
+
+        debug_assert_eq!(
+            multiply_matrices(&q_bar_inv, &q_bar),
+            (q_bar_inv.0, id.clone()),
+            "Permutation Q inverse is incorrect"
+        );
+
+        debug_assert_eq!(
+            multiply_matrices(
+                &p_bar_inv,
+                &multiply_matrices(&l_bar, &multiply_matrices(&u_bar, &q_bar))
+            ),
+            active_block_product,
+            "LU Decomposition is incorrect"
+        );
+
+        debug_assert_eq!(
+            multiply_matrices(&multiply_matrices(&l_bar, &q_bar), &q_bar_inv),
+            l_bar,
+            "Q permutation is wrong"
+        );
+
+        debug_assert_eq!(
+            multiply_matrices(&p_bar_inv, &multiply_matrices(&p_bar, &u_bar)),
+            u_bar,
+            "P permutation is wrong"
+        );
 
         // Compute new entries for L matrix
         l_21 = multiply_matrices(&p_bar, &l_21);
@@ -273,11 +320,11 @@ where
         );
 
         // Compute new entries for U matrix
-        // TODO(Debug): u_23 is not sorted? might be a bug. insert block deals with this by using binary search and insert
-        u_12 = multiply_matrices(&u_12, &q_bar);
+        u_12 = multiply_matrices(&u_12, &q_bar_inv);
+        // TODO(Performance): parallelize this by doing two multiplcations in parallel except for sequential
         u_23 = multiply_matrices(
-            &multiply_matrices(&l_bar_inv, &p_bar),
-            &multiply_matrices(&l_22, &u_23),
+            &l_bar_inv,
+            &multiply_matrices(&p_bar, &multiply_matrices(&l_22, &u_23)),
         );
 
         // Restore L and U to upper triangular
@@ -303,7 +350,7 @@ where
             (0..l.len())
                 .map(|j| {
                     if j >= active_block_column && j <= active_block_row {
-                        q_bar_inv.1[j - active_block_column][0].0 + active_block_column
+                        q_bar.1[j - active_block_column][0].0 + active_block_column
                     } else {
                         j
                     }
@@ -345,15 +392,17 @@ where
         // apply row updates to rhs
         for (p, _) in self.updates.iter() {
             // apply last inverse row permutation of updates vector
-            rhs = rhs
-                .iter()
-                .map(|(mut i, v)| {
-                    p.backward(&mut i);
-                    (i, v.clone())
-                })
-                .collect();
-            // apply last inverse column permutation of updates vector
-            // q.backward_unsorted(&mut rhs[..])
+            // rhs = rhs
+            //     .iter()
+            //     .map(|(mut i, v)| {
+            //         p.backward(&mut i);
+            //         (i, v.clone())
+            //     })
+            //     .collect();
+            let mut temp = p.clone();
+            temp.invert();
+            let perm = generate_permutation_matrix::<F>(&temp);
+            rhs = multiply_matrices(&perm, &(perm.0, vec![rhs])).1[0].clone();
         }
 
         let rhs = BTreeMap::from_iter(rhs.into_iter());
@@ -368,10 +417,16 @@ where
 
         // Apply column permutation updates
         for (_, q) in self.updates.iter().rev() {
-            q.forward_sorted(&mut column);
+            // q.forward_sorted(&mut column);
+
+            let mut temp = q.clone();
+            temp.invert();
+            let perm = generate_permutation_matrix::<F>(&temp);
+            column = multiply_matrices(&perm, &(perm.0, vec![column])).1[0].clone();
         }
+
         // Apply initial column permutation
-        self.column_permutation.forward_sorted(&mut column);
+        self.column_permutation.backward_sorted(&mut column);
         column.sort_unstable_by_key(|&(i, _)| i);
 
         Self::ColumnComputationInfo {
@@ -396,27 +451,69 @@ where
 
     fn should_refactor(&self) -> bool {
         // TODO(ENHANCEMENT): What would be a good decision rule?
-        self.updates.len() > 10
+        false
     }
 
     fn basis_inverse_row(&self, mut row: usize) -> SparseVector<Self::F, Self::F> {
-        self.column_permutation.forward(&mut row);
+        let mut q_perm = self.column_permutation.clone();
+        let mut p_perm = self.column_permutation.clone();
+        let q = generate_permutation_matrix::<F>(&q_perm);
+        let p = generate_permutation_matrix::<F>(&p_perm);
 
-        for (_, q) in &self.updates {
-            q.forward(&mut row);
-        }
+        p_perm.invert();
+        q_perm.invert();
+
+        let q_inv = generate_permutation_matrix::<F>(&q_perm);
+        let p_inv = generate_permutation_matrix::<F>(&p_perm);
 
         // unit vector where v[row]=1
-        let initial_rhs = iter::once((row, Self::F::one())).collect();
+
+        let mut initial_rhs = vec![vec![]; self.upper_triangular.len()];
+        initial_rhs[row].push((0, F::one()));
+
+        initial_rhs = multiply_matrices(&(1, initial_rhs), &q_inv).1;
+
+        for (_, q_bar) in &self.updates {
+            let mut temp = q_bar.clone();
+            temp.invert();
+            let perm = generate_permutation_matrix::<F>(&temp);
+
+            initial_rhs = multiply_matrices(&(1, initial_rhs), &perm).1.clone();
+        }
+        //
+        initial_rhs = (0..initial_rhs.len())
+            .map(|j| initial_rhs[j].iter().map(|(_, x)| (j, x.clone())).collect())
+            .collect();
+
+        initial_rhs = initial_rhs
+            .into_iter()
+            .filter(|vec| !vec.is_empty())
+            .collect();
+
+        let initial_rhs = BTreeMap::from_iter(initial_rhs.last().unwrap().clone().into_iter());
 
         let mut w = self.invert_upper_left(initial_rhs);
         let mut tuples = self.invert_lower_left(w.into_iter().collect());
 
-        for (p, _) in self.updates.iter().rev() {
-            p.backward_sorted(&mut tuples);
+        let mut tuples_matrix = vec![vec![]; self.upper_triangular.len()];
+        for (i, x) in &tuples {
+            tuples_matrix[*i].push((0, x.clone()));
         }
 
-        self.row_permutation.backward_sorted(&mut tuples);
+        for (p_bar, _) in self.updates.iter().rev() {
+            let mut temp = p_bar.clone();
+            temp.invert();
+            let perm = generate_permutation_matrix::<F>(&temp);
+            tuples_matrix = multiply_matrices(&(1, tuples_matrix), &perm).1.clone();
+        }
+        tuples_matrix = multiply_matrices(&(1, tuples_matrix), &p).1;
+
+        tuples = Vec::new();
+        for j in 0..tuples_matrix.len() {
+            if !tuples_matrix[j].is_empty() {
+                tuples.push((j, tuples_matrix[j][0].1.clone()));
+            }
+        }
 
         SparseVector::new(tuples, self.m())
     }
@@ -607,6 +704,7 @@ fn multiply_matrices<F: Clone + ops::Internal + ops::InternalHR>(
                 product[column].push((row, row_sum));
             }
         }
+        product[column].sort_by_key(|&(i, _)| i);
     }
     (a_size.0, product)
 }
@@ -816,7 +914,50 @@ mod test {
 
     mod matmul {
         use super::*;
+        use crate::algorithm::two_phase::tableau::inverse_maintenance::carry::lower_upper_remultiply_factor::{multiply_matrices, generate_permutation_matrix};
+        use crate::algorithm::two_phase::tableau::inverse_maintenance::carry::lower_upper_remultiply_factor::permutation::Permutation;
 
+        #[test]
+        // fn reconstruction() {
+        //     let m = 3;
+        //     let matrix = vec![
+        //         vec![(0, RB!(1)), (1, RB!(2)), (2, RB!(3))],
+        //         vec![(0, RB!(3)), (1, RB!(2)), (2, RB!(3))],
+        //         vec![(1, RB!(3)), (2, RB!(3))],
+        //     ];
+        //     let mut lu = LUDecomposition::rows(matrix.clone());
+        //     println!("col: {}", lu.column_permutation);
+        //     println!("row: {}", lu.row_permutation);
+        //     let p = generate_permutation_matrix::<RationalBig>(&lu.row_permutation);
+        //     let q = generate_permutation_matrix::<RationalBig>(&lu.column_permutation);
+        //
+        //     lu.row_permutation.invert();
+        //     lu.column_permutation.invert();
+        //     let p_inv = generate_permutation_matrix::<RationalBig>(&lu.row_permutation);
+        //     let q_inv = generate_permutation_matrix::<RationalBig>(&lu.column_permutation);
+        //
+        //     let mut l = lu.lower_triangular.clone();
+        //     l.push(vec![]);
+        //     for col in 0..m {
+        //         l[col].insert(0, (col, RB!(1)));
+        //     }
+        //
+        //     let reconstructed = multiply_matrices(
+        //         &p_inv,
+        //         &multiply_matrices(&(m, l), &multiply_matrices(&(m, lu.upper_triangular), &q)),
+        //     );
+        //     assert_eq!(
+        //         reconstructed,
+        //         (
+        //             m,
+        //             vec![
+        //                 vec![(1, RB!(2))],
+        //                 vec![(0, RB!(2))],
+        //                 vec![(0, RB!(3)), (2, RB!(5))]
+        //             ]
+        //         )
+        //     );
+        // }
         #[test]
         fn identity_empty() {
             let identity = LUDecomposition::<RationalBig>::identity(2);
