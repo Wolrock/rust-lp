@@ -130,14 +130,14 @@ where
         } = column;
 
         self.upper_triangular[pivot_column_index] = spike;
-        println!("SPIKE: {:?}", self.upper_triangular[pivot_column_index]);
+        // println!("SPIKE: {:?}", self.upper_triangular[pivot_column_index]);
         let mut active_block_row = self.upper_triangular[pivot_column_index].last().unwrap().0;
         let mut active_block_column = pivot_column_index;
         let l = &mut self.lower_triangular;
         let u = &mut self.upper_triangular;
         // TODO(Debug): this no change case might be wrong
         if active_block_column == active_block_row {
-            println!("NO CHANGE");
+            // println!("NO CHANGE");
             self.updates.push((
                 FullPermutation::identity(u.len()),
                 FullPermutation::identity(u.len()),
@@ -195,9 +195,9 @@ where
         });
         // Compute LU of active block
 
-        println!("Active Block Row: {}", active_block_row);
-        println!("Active Block Column: {}", active_block_column);
-        println!("Active block product: {:?}", active_block_product_T);
+        // println!("Active Block Row: {}", active_block_row);
+        // println!("Active Block Column: {}", active_block_column);
+        // println!("Active block product: {:?}", active_block_product_T);
         let mut active_block_lu = LUDecomposition::<F>::rows(active_block_product_T.1);
         // println!("Active block LU: {}", active_block_lu);
 
