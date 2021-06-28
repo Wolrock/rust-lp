@@ -1,28 +1,26 @@
 //! # LU decomposition
+use std::array::IntoIter;
+use std::borrow::Borrow;
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
 use std::fmt;
 use std::fmt::Display;
 use std::iter;
-
+use std::iter::FromIterator;
 use std::thread::sleep;
 use std::time::{Duration, SystemTime};
 
 use num::Zero;
 
 use crate::algorithm::two_phase::matrix_provider::column::{Column, OrderedColumn};
+use crate::algorithm::two_phase::tableau::inverse_maintenance::{ColumnComputationInfo, ops};
+use crate::algorithm::two_phase::tableau::inverse_maintenance::carry::BasisInverse;
 use crate::algorithm::two_phase::tableau::inverse_maintenance::carry::lower_upper_remultiply_factor::permutation::{
     FullPermutation, Permutation,
 };
-use crate::algorithm::two_phase::tableau::inverse_maintenance::carry::BasisInverse;
-use crate::algorithm::two_phase::tableau::inverse_maintenance::{ops, ColumnComputationInfo};
 use crate::data::linear_algebra::traits::SparseElement;
 use crate::data::linear_algebra::vector::{SparseVector, Vector};
-
 use crate::RB;
-use std::array::IntoIter;
-use std::borrow::Borrow;
-use std::iter::FromIterator;
 
 mod decomposition;
 mod permutation;
@@ -113,9 +111,8 @@ where
             // Compute and store the column permutations applied through Q
             // -> Q places spike in column p in position m and moves other columns to the left
             self.column_permutation.forward(&mut pivot_column_index);
-            for (p, q) in &self.updates {
+            for (_, q) in &self.updates {
                 Permutation::forward(q, &mut pivot_column_index);
-                // Permutation::backward(p, &mut pivot_column_index);
             }
             pivot_column_index
         };
@@ -224,13 +221,6 @@ where
             );
         }
 
-        let mut p_bar = generate_permutation_matrix(&active_block_lu.row_permutation);
-        let mut q_bar = generate_permutation_matrix(&active_block_lu.column_permutation);
-
-        // Compute required inversions for updates
-        &active_block_lu.column_permutation.invert();
-        &active_block_lu.row_permutation.invert();
-
         let mut l_bar_inv = Vec::new();
         let mut l_22_inv = Vec::new();
 
@@ -275,59 +265,41 @@ where
             "Inverse computation of L_22 incorrect"
         );
 
-        //TODO(Performance): use methods instead of full matrix generation
-        let p_bar_inv = generate_permutation_matrix::<F>(&active_block_lu.row_permutation);
-        let q_bar_inv = generate_permutation_matrix::<F>(&active_block_lu.column_permutation);
-
-        debug_assert_eq!(
-            multiply_matrices(&p_bar_inv, &p_bar),
-            (p_bar_inv.0, id.clone()),
-            "Permutation P inverse is incorrect"
-        );
-
-        debug_assert_eq!(
-            multiply_matrices(&q_bar_inv, &q_bar),
-            (q_bar_inv.0, id.clone()),
-            "Permutation Q inverse is incorrect"
-        );
-
-        debug_assert_eq!(
-            multiply_matrices(
-                &p_bar_inv,
-                &multiply_matrices(&l_bar, &multiply_matrices(&u_bar, &q_bar))
-            ),
-            active_block_product,
-            "LU Decomposition is incorrect"
-        );
-
-        debug_assert_eq!(
-            multiply_matrices(&multiply_matrices(&l_bar, &q_bar), &q_bar_inv),
-            l_bar,
-            "Q permutation is wrong"
-        );
-
-        debug_assert_eq!(
-            multiply_matrices(&p_bar_inv, &multiply_matrices(&p_bar, &u_bar)),
-            u_bar,
-            "P permutation is wrong"
-        );
-
         // Compute new entries for L matrix
-        l_21 = multiply_matrices(&p_bar, &l_21);
-        l_32 = multiply_matrices(
-            &multiply_matrices(&l_32, &l_22_inv),
-            &multiply_matrices(&p_bar_inv, &l_bar),
-        );
+        for column in &mut l_21.1 {
+            active_block_lu.row_permutation.forward_sorted(column);
+        }
+
+        // TODO(Performance): can avoid this clone by doing calculation after l_bar insert (or just dont do inserts in the first place)
+        let mut l_bar_perm = l_bar.clone();
+        for column in &mut l_bar_perm.1 {
+            active_block_lu.row_permutation.backward_sorted(column);
+        }
+
+        l_32 = multiply_matrices(&multiply_matrices(&l_32, &l_22_inv), &l_bar_perm);
 
         // Compute new entries for U matrix
-        u_12 = multiply_matrices(&u_12, &q_bar_inv);
-        // TODO(Performance): parallelize this by doing two multiplcations in parallel except for sequential
-        u_23 = multiply_matrices(
-            &l_bar_inv,
-            &multiply_matrices(&p_bar, &multiply_matrices(&l_22, &u_23)),
-        );
+        let mut new_columns = u_12
+            .1
+            .into_iter()
+            .enumerate()
+            .map(|(mut j, column)| {
+                active_block_lu.column_permutation.forward(&mut j);
+
+                (j, column)
+            })
+            .collect::<Vec<_>>();
+        new_columns.sort_unstable_by_key(|&(i, _)| i);
+        u_12 = (u_12.0, new_columns.into_iter().map(|(_, c)| c).collect());
+
+        let mut l_22_u_23 = multiply_matrices(&l_22, &u_23);
+        for column in &mut l_22_u_23.1 {
+            active_block_lu.row_permutation.forward_sorted(column);
+        }
+        u_23 = multiply_matrices(&l_bar_inv, &l_22_u_23);
 
         // Restore L and U to upper triangular
+        // TODO(Performance): this can probably be done in place without the need to insert after
         insert_block(l, &l_bar, active_block_column, active_block_column);
         insert_block(l, &l_32, active_block_row + 1, active_block_column);
         insert_block(l, &l_21, active_block_column, 0);
@@ -335,28 +307,20 @@ where
         insert_block(u, &u_bar, active_block_column, active_block_column);
         insert_block(u, &u_23, active_block_column, active_block_row + 1);
 
-        let row_update = FullPermutation::new(
-            (0..l.len())
-                .map(|j| {
-                    if j >= active_block_column && j <= active_block_row {
-                        p_bar_inv.1[j - active_block_column][0].0 + active_block_column
-                    } else {
-                        j
-                    }
-                })
-                .collect(),
-        );
-        let column_update = FullPermutation::new(
-            (0..l.len())
-                .map(|j| {
-                    if j >= active_block_column && j <= active_block_row {
-                        q_bar.1[j - active_block_column][0].0 + active_block_column
-                    } else {
-                        j
-                    }
-                })
-                .collect(),
-        );
+        let (_, small_p) = active_block_lu.row_permutation.into_inner();
+        let row_update_indices = (0..active_block_column)
+            .chain(small_p.into_iter().map(|i| i + active_block_column))
+            .chain(((active_block_row + 1)..l.len()))
+            .collect::<Vec<_>>();
+        let row_update = FullPermutation::new(row_update_indices);
+
+        let (small_q, _) = active_block_lu.column_permutation.into_inner();
+        let column_update_indices = (0..active_block_column)
+            .chain(small_q.into_iter().map(|i| i + active_block_column))
+            .chain(((active_block_row + 1)..l.len()))
+            .collect::<Vec<_>>();
+        let column_update = FullPermutation::new(column_update_indices);
+
         // Restore l into non square and non unit lower
         // TODO(Debug): might be problematic if L is not unit lower_triangular but only lower triangular
         l.pop();
@@ -391,19 +355,9 @@ where
 
         // apply row updates to rhs
         for (p, _) in self.updates.iter() {
-            // apply last inverse row permutation of updates vector
-            // rhs = rhs
-            //     .iter()
-            //     .map(|(mut i, v)| {
-            //         p.backward(&mut i);
-            //         (i, v.clone())
-            //     })
-            //     .collect();
-            let mut temp = p.clone();
-            temp.invert();
-            let perm = generate_permutation_matrix::<F>(&temp);
-            rhs = multiply_matrices(&perm, &(perm.0, vec![rhs])).1[0].clone();
+            p.backward_unsorted(&mut rhs);
         }
+        rhs.sort_unstable_by_key(|&(i, _)| i);
 
         let rhs = BTreeMap::from_iter(rhs.into_iter());
 
@@ -417,16 +371,10 @@ where
 
         // Apply column permutation updates
         for (_, q) in self.updates.iter().rev() {
-            // q.forward_sorted(&mut column);
-
-            let mut temp = q.clone();
-            temp.invert();
-            let perm = generate_permutation_matrix::<F>(&temp);
-            column = multiply_matrices(&perm, &(perm.0, vec![column])).1[0].clone();
+            q.backward_unsorted(&mut column);
         }
-
+        self.column_permutation.backward_unsorted(&mut column);
         // Apply initial column permutation
-        self.column_permutation.backward_sorted(&mut column);
         column.sort_unstable_by_key(|&(i, _)| i);
 
         Self::ColumnComputationInfo {
@@ -455,65 +403,25 @@ where
     }
 
     fn basis_inverse_row(&self, mut row: usize) -> SparseVector<Self::F, Self::F> {
-        let mut q_perm = self.column_permutation.clone();
-        let mut p_perm = self.column_permutation.clone();
-        let q = generate_permutation_matrix::<F>(&q_perm);
-        let p = generate_permutation_matrix::<F>(&p_perm);
+        // yP^{-1}LUQ = c <=> yP^{-1}LU = cQ^{-1} with e.g. c = [0 1 0 0 ...] (row vector)
 
-        p_perm.invert();
-        q_perm.invert();
-
-        let q_inv = generate_permutation_matrix::<F>(&q_perm);
-        let p_inv = generate_permutation_matrix::<F>(&p_perm);
-
-        // unit vector where v[row]=1
-
-        let mut initial_rhs = vec![vec![]; self.upper_triangular.len()];
-        initial_rhs[row].push((0, F::one()));
-
-        initial_rhs = multiply_matrices(&(1, initial_rhs), &q_inv).1;
+        self.column_permutation.forward(&mut row);
 
         for (_, q_bar) in &self.updates {
-            let mut temp = q_bar.clone();
-            temp.invert();
-            let perm = generate_permutation_matrix::<F>(&temp);
-
-            initial_rhs = multiply_matrices(&(1, initial_rhs), &perm).1.clone();
+            q_bar.forward(&mut row);
         }
-        //
-        initial_rhs = (0..initial_rhs.len())
-            .map(|j| initial_rhs[j].iter().map(|(_, x)| (j, x.clone())).collect())
-            .collect();
-
-        initial_rhs = initial_rhs
-            .into_iter()
-            .filter(|vec| !vec.is_empty())
-            .collect();
-
-        let initial_rhs = BTreeMap::from_iter(initial_rhs.last().unwrap().clone().into_iter());
+        let initial_rhs = iter::once((row, Self::F::one())).collect();
 
         let mut w = self.invert_upper_left(initial_rhs);
         let mut tuples = self.invert_lower_left(w.into_iter().collect());
 
-        let mut tuples_matrix = vec![vec![]; self.upper_triangular.len()];
-        for (i, x) in &tuples {
-            tuples_matrix[*i].push((0, x.clone()));
-        }
+        // c P = (P^T c^T)^T = (P^{-1} c^T)^T = (P^{-1} c)^T = P^{-1} c
 
         for (p_bar, _) in self.updates.iter().rev() {
-            let mut temp = p_bar.clone();
-            temp.invert();
-            let perm = generate_permutation_matrix::<F>(&temp);
-            tuples_matrix = multiply_matrices(&(1, tuples_matrix), &perm).1.clone();
+            p_bar.forward_unsorted(&mut tuples);
         }
-        tuples_matrix = multiply_matrices(&(1, tuples_matrix), &p).1;
-
-        tuples = Vec::new();
-        for j in 0..tuples_matrix.len() {
-            if !tuples_matrix[j].is_empty() {
-                tuples.push((j, tuples_matrix[j][0].1.clone()));
-            }
-        }
+        self.row_permutation.backward_unsorted(&mut tuples);
+        tuples.sort_unstable_by_key(|&(i, _)| i);
 
         SparseVector::new(tuples, self.m())
     }
@@ -654,18 +562,6 @@ where
     }
 }
 
-fn generate_permutation_matrix<F: num::One>(p: &FullPermutation) -> (usize, Vec<Vec<(usize, F)>>) {
-    (
-        p.len(),
-        (0..p.len())
-            .map(|mut j| {
-                p.forward(&mut j);
-                vec![(j, F::one())]
-            })
-            .collect(),
-    )
-}
-
 fn multiply_matrices<F: Clone + ops::Internal + ops::InternalHR>(
     a: &(usize, Vec<Vec<(usize, F)>>),
     b: &(usize, Vec<Vec<(usize, F)>>),
@@ -704,7 +600,7 @@ fn multiply_matrices<F: Clone + ops::Internal + ops::InternalHR>(
                 product[column].push((row, row_sum));
             }
         }
-        product[column].sort_by_key(|&(i, _)| i);
+        product[column].sort_unstable_by_key(|&(i, _)| i);
     }
     (a_size.0, product)
 }
@@ -906,16 +802,17 @@ mod test {
     use crate::algorithm::two_phase::matrix_provider::matrix_data::Column;
     use crate::algorithm::two_phase::tableau::inverse_maintenance::carry::BasisInverse;
     use crate::algorithm::two_phase::tableau::inverse_maintenance::carry::lower_upper_remultiply_factor::ColumnAndSpike;
+    use crate::algorithm::two_phase::tableau::inverse_maintenance::carry::lower_upper_remultiply_factor::LUDecomposition;
     use crate::algorithm::two_phase::tableau::inverse_maintenance::carry::lower_upper_remultiply_factor::permutation::FullPermutation;
     use crate::algorithm::two_phase::tableau::inverse_maintenance::ColumnComputationInfo;
     use crate::data::linear_algebra::vector::{SparseVector, Vector};
     use crate::data::number_types::rational::{Rational64, RationalBig};
-    use crate::algorithm::two_phase::tableau::inverse_maintenance::carry::lower_upper_remultiply_factor::LUDecomposition;
 
     mod matmul {
-        use super::*;
-        use crate::algorithm::two_phase::tableau::inverse_maintenance::carry::lower_upper_remultiply_factor::{multiply_matrices, generate_permutation_matrix};
+        use crate::algorithm::two_phase::tableau::inverse_maintenance::carry::lower_upper_remultiply_factor::multiply_matrices;
         use crate::algorithm::two_phase::tableau::inverse_maintenance::carry::lower_upper_remultiply_factor::permutation::Permutation;
+
+        use super::*;
 
         #[test]
         // fn reconstruction() {
@@ -1076,7 +973,6 @@ mod test {
     }
 
     mod change_basis {
-
         use super::*;
 
         /// Spike is the column which is already there.

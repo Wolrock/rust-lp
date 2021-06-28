@@ -53,6 +53,10 @@ impl Full {
     pub fn invert(&mut self) {
         mem::swap(&mut self.forward, &mut self.backward);
     }
+
+    pub fn into_inner(self) -> (Vec<usize>, Vec<usize>) {
+        (self.forward, self.backward)
+    }
 }
 
 impl Permutation for Full {
