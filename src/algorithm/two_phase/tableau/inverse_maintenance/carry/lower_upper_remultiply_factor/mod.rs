@@ -399,7 +399,7 @@ where
 
     fn should_refactor(&self) -> bool {
         // TODO(ENHANCEMENT): What would be a good decision rule?
-        false
+        self.updates.len() > 200
     }
 
     fn basis_inverse_row(&self, mut row: usize) -> SparseVector<Self::F, Self::F> {
